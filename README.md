@@ -70,9 +70,9 @@ Useful endpoints:
 - `GET /ingestion/raw-records?location_id=1&source=Open-Meteo`
 - `GET /normalization/records?location_id=1&quality_status=accepted`
 - `GET /current-state/{location_id}`
-- `GET /phase-layers/{location_id}`
+- `GET /forecast/layers/{location_id}`
 - `POST /validation/run/{location_id}`
-- `GET /phase-20/{location_id}`
+- `GET /validation/report/{location_id}`
 - `GET /predictions/history`
 - `GET /predictions/{prediction_id}`
 - `GET /errors`
@@ -84,4 +84,4 @@ Useful endpoints:
 - `GET /forecast/transparency/{location_id}`
 - `GET /scorecard`
 - `GET /api/catalog`
-- `GET /phase-35/{location_id}`
+- `GET /forecast/system-report/{location_id}`

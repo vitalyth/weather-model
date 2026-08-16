@@ -398,7 +398,7 @@ def test_phase_layers_builds_layers_through_phase_10() -> None:
     ).json()
 
     client.post(f"/locations/{location['id']}/forecasts")
-    layers = client.get(f"/phase-layers/{location['id']}").json()
+    layers = client.get(f"/forecast/layers/{location['id']}").json()
 
     assert layers["location"]["id"] == location["id"]
     assert layers["numerical_model_layer"]["model_count"] >= 1
@@ -422,7 +422,7 @@ def test_phase20_report_exposes_validation_and_benchmark_contracts() -> None:
 
     client.post(f"/locations/{location['id']}/forecasts")
     validation = client.post(f"/validation/run/{location['id']}").json()
-    report = client.get(f"/phase-20/{location['id']}").json()
+    report = client.get(f"/validation/report/{location['id']}").json()
 
     assert validation["created_records"] >= 0
     assert report["location"]["id"] == location["id"]
@@ -456,7 +456,7 @@ def test_phase35_completion_endpoints_expose_history_health_and_scorecard() -> N
     detail = client.get(f"/predictions/{forecast['id']}").json()
     health = client.get(f"/system/health?location_id={location['id']}").json()
     scorecard = client.get(f"/scorecard?location_id={location['id']}").json()
-    phase35 = client.get(f"/phase-35/{location['id']}").json()
+    phase35 = client.get(f"/forecast/system-report/{location['id']}").json()
     catalog = client.get("/api/catalog").json()
 
     assert history[0]["snapshot_id"] == forecast["id"]
@@ -481,7 +481,7 @@ def test_phase35_completion_endpoints_expose_history_health_and_scorecard() -> N
         "Next.js",
         "TypeScript",
     ]
-    assert "GET /phase-35/{location_id}" in catalog
+    assert "GET /forecast/system-report/{location_id}" in catalog
 
 
 def test_delete_location_removes_location_and_snapshots() -> None:

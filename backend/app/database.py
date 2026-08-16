@@ -11,7 +11,11 @@ class Base(DeclarativeBase):
 
 
 settings = get_settings()
-connect_args = {"check_same_thread": False} if settings.database_url.startswith("sqlite") else {}
+connect_args = (
+    {"check_same_thread": False, "timeout": 30}
+    if settings.database_url.startswith("sqlite")
+    else {}
+)
 if settings.database_url.startswith("sqlite:///"):
     database_path = settings.database_url.removeprefix("sqlite:///")
     if database_path != ":memory:":

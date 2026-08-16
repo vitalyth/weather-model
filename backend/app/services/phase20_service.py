@@ -43,6 +43,12 @@ MIN_TRAINING_SAMPLES = 30
 MIN_SIGNIFICANCE_SAMPLES = 30
 
 
+def _as_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
+
+
 def freeze_feature_snapshot(
     db: Session,
     forecast_snapshot: ForecastSnapshot,
@@ -76,10 +82,9 @@ def validate_matured_forecasts(db: Session, location: Location) -> int:
     for snapshot in snapshots:
         payload = json.loads(snapshot.payload_json)
         regime = _snapshot_regime(db, snapshot)
+        forecast_created_at = _as_utc(snapshot.forecast_created_at)
         for point in payload.get("points", []):
-            forecast_valid_at = datetime.fromisoformat(point["forecast_valid_at"])
-            if forecast_valid_at.tzinfo is None:
-                forecast_valid_at = forecast_valid_at.replace(tzinfo=UTC)
+            forecast_valid_at = _as_utc(datetime.fromisoformat(point["forecast_valid_at"]))
             for variable, (normalized_variable, getter) in VALIDATION_VARIABLES.items():
                 if _validation_exists(db, snapshot.id, point["horizon"], variable):
                     continue
@@ -87,7 +92,7 @@ def validate_matured_forecasts(db: Session, location: Location) -> int:
                     db,
                     location.id,
                     normalized_variable,
-                    snapshot.forecast_created_at,
+                    forecast_created_at,
                     forecast_valid_at,
                 )
                 if observation is None or observation.normalized_value is None:
@@ -97,7 +102,7 @@ def validate_matured_forecasts(db: Session, location: Location) -> int:
                     db,
                     location.id,
                     normalized_variable,
-                    snapshot.forecast_created_at,
+                    forecast_created_at,
                     forecast_valid_at,
                 )
                 benchmark_value = None if benchmark is None else benchmark.normalized_value
@@ -112,7 +117,7 @@ def validate_matured_forecasts(db: Session, location: Location) -> int:
                     location_id=location.id,
                     horizon=point["horizon"],
                     horizon_hours=int(point["horizon_hours"]),
-                    forecast_created_at=snapshot.forecast_created_at,
+                    forecast_created_at=forecast_created_at,
                     forecast_valid_at=forecast_valid_at,
                     validated_at=datetime.now(UTC),
                     observation_time=observation.valid_time,
@@ -147,7 +152,6 @@ def validate_matured_forecasts(db: Session, location: Location) -> int:
 
 
 def build_phase20_report(db: Session, location: Location) -> Phase20ReportRead:
-    validate_matured_forecasts(db, location)
     generated_at = datetime.now(UTC)
     phase_layers = build_phase_layers(db, location)
     validations = _validation_records(db, location.id)
@@ -204,7 +208,11 @@ def _nearest_observation(
             .where(NormalizedWeatherRecord.valid_time <= window_end)
         ).all()
     )
-    return min(records, key=lambda record: abs(record.valid_time - forecast_valid_at), default=None)
+    return min(
+        records,
+        key=lambda record: abs(_as_utc(record.valid_time) - forecast_valid_at),
+        default=None,
+    )
 
 
 def _nearest_benchmark(
@@ -228,7 +236,11 @@ def _nearest_benchmark(
             .where(NormalizedWeatherRecord.valid_time <= window_end)
         ).all()
     )
-    return min(records, key=lambda record: abs(record.valid_time - forecast_valid_at), default=None)
+    return min(
+        records,
+        key=lambda record: abs(_as_utc(record.valid_time) - forecast_valid_at),
+        default=None,
+    )
 
 
 def _snapshot_regime(db: Session, snapshot: ForecastSnapshot) -> str | None:

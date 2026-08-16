@@ -241,28 +241,43 @@ def read_current_state(location_id: int, db: DbSession) -> CurrentStateRead:
     return build_current_state(db, location)
 
 
-@app.get("/phase-layers/{location_id}", response_model=PhaseLayersRead)
-def read_phase_layers(location_id: int, db: DbSession) -> PhaseLayersRead:
+def _get_location_or_404(location_id: int, db: DbSession) -> Location:
     location = db.get(Location, location_id)
     if location is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Location not found")
+    return location
+
+
+@app.get("/forecast/layers/{location_id}", response_model=PhaseLayersRead)
+def read_forecast_layers(location_id: int, db: DbSession) -> PhaseLayersRead:
+    location = _get_location_or_404(location_id, db)
     return build_phase_layers(db, location)
+
+
+@app.get(
+    "/phase-layers/{location_id}",
+    response_model=PhaseLayersRead,
+    include_in_schema=False,
+)
+def read_phase_layers_alias(location_id: int, db: DbSession) -> PhaseLayersRead:
+    return read_forecast_layers(location_id, db)
 
 
 @app.post("/validation/run/{location_id}")
 def run_validation(location_id: int, db: DbSession) -> dict[str, int]:
-    location = db.get(Location, location_id)
-    if location is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Location not found")
+    location = _get_location_or_404(location_id, db)
     return {"created_records": validate_matured_forecasts(db, location)}
 
 
-@app.get("/phase-20/{location_id}", response_model=Phase20ReportRead)
-def read_phase20_report(location_id: int, db: DbSession) -> Phase20ReportRead:
-    location = db.get(Location, location_id)
-    if location is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Location not found")
+@app.get("/validation/report/{location_id}", response_model=Phase20ReportRead)
+def read_validation_report(location_id: int, db: DbSession) -> Phase20ReportRead:
+    location = _get_location_or_404(location_id, db)
     return build_phase20_report(db, location)
+
+
+@app.get("/phase-20/{location_id}", response_model=Phase20ReportRead, include_in_schema=False)
+def read_phase20_report_alias(location_id: int, db: DbSession) -> Phase20ReportRead:
+    return read_validation_report(location_id, db)
 
 
 @app.get("/predictions/history", response_model=list[PredictionHistoryItemRead])
@@ -369,9 +384,12 @@ def read_api_catalog() -> list[str]:
     return api_catalog()
 
 
-@app.get("/phase-35/{location_id}", response_model=Phase35ReportRead)
-def read_phase35_report(location_id: int, db: DbSession) -> Phase35ReportRead:
-    location = db.get(Location, location_id)
-    if location is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Location not found")
+@app.get("/forecast/system-report/{location_id}", response_model=Phase35ReportRead)
+def read_forecast_system_report(location_id: int, db: DbSession) -> Phase35ReportRead:
+    location = _get_location_or_404(location_id, db)
     return phase35_report(db, location)
+
+
+@app.get("/phase-35/{location_id}", response_model=Phase35ReportRead, include_in_schema=False)
+def read_phase35_report_alias(location_id: int, db: DbSession) -> Phase35ReportRead:
+    return read_forecast_system_report(location_id, db)

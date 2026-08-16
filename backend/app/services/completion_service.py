@@ -24,6 +24,12 @@ from app.schemas import (
 from app.services.phase20_service import build_phase20_report
 
 
+def _as_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
+
+
 def prediction_history(
     db: Session, location_id: int | None = None, limit: int = 100
 ) -> list[PredictionHistoryItemRead]:
@@ -38,9 +44,7 @@ def prediction_history(
         by_horizon = {(record.horizon, record.variable): record for record in validations}
         for point in payload.get("points", []):
             validation = by_horizon.get((point["horizon"], "temperature"))
-            target_time = datetime.fromisoformat(point["forecast_valid_at"])
-            if target_time.tzinfo is None:
-                target_time = target_time.replace(tzinfo=UTC)
+            target_time = _as_utc(datetime.fromisoformat(point["forecast_valid_at"]))
             items.append(
                 PredictionHistoryItemRead(
                     snapshot_id=snapshot.id,
@@ -70,9 +74,7 @@ def prediction_detail(db: Session, prediction_id: int) -> list[PredictionHistory
     items: list[PredictionHistoryItemRead] = []
     for point in payload.get("points", []):
         validation = by_horizon.get((point["horizon"], "temperature"))
-        target_time = datetime.fromisoformat(point["forecast_valid_at"])
-        if target_time.tzinfo is None:
-            target_time = target_time.replace(tzinfo=UTC)
+        target_time = _as_utc(datetime.fromisoformat(point["forecast_valid_at"]))
         items.append(
             PredictionHistoryItemRead(
                 snapshot_id=snapshot.id,
@@ -183,7 +185,8 @@ def system_health(db: Session, location_id: int | None = None) -> SystemHealthRe
     observation_age = None
     if latest_validation is not None:
         observation_age = round(
-            (datetime.now(UTC) - latest_validation.observation_time).total_seconds() / 3600,
+            (datetime.now(UTC) - _as_utc(latest_validation.observation_time)).total_seconds()
+            / 3600,
             2,
         )
     missing_models = ["ECMWF", "GFS", "HRRR", "ICON"]
@@ -394,8 +397,8 @@ def automation_tasks() -> list[AutomationTaskRead]:
         AutomationTaskRead(
             name="generate_forecasts",
             cadence="hourly",
-            status="manual_endpoint_ready",
-            note="Use POST /locations/{location_id}/forecasts until scheduler is added.",
+            status="scheduled_and_manual",
+            note="Background collection and POST /locations/{location_id}/forecasts both create snapshots.",
         ),
         AutomationTaskRead(
             name="validate_forecasts",
@@ -420,9 +423,9 @@ def api_catalog() -> list[str]:
         "POST /locations/{location_id}/forecasts",
         "GET /forecasts",
         "GET /forecasts/{snapshot_id}",
-        "GET /phase-layers/{location_id}",
+        "GET /forecast/layers/{location_id}",
         "POST /validation/run/{location_id}",
-        "GET /phase-20/{location_id}",
+        "GET /validation/report/{location_id}",
         "GET /predictions/history",
         "GET /predictions/{prediction_id}",
         "GET /accuracy/head-to-head",
@@ -433,7 +436,7 @@ def api_catalog() -> list[str]:
         "GET /errors/{prediction_id}",
         "GET /system/health",
         "GET /scorecard",
-        "GET /phase-35/{location_id}",
+        "GET /forecast/system-report/{location_id}",
     ]
 
 

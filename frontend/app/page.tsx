@@ -682,9 +682,9 @@ export default function Home() {
           `/normalization/records?location_id=${selectedLocationId}&limit=12`
         ),
         api<CurrentState>(`/current-state/${selectedLocationId}`),
-        api<PhaseLayers>(`/phase-layers/${selectedLocationId}`),
-        api<Phase20Report>(`/phase-20/${selectedLocationId}`),
-        api<Phase35Report>(`/phase-35/${selectedLocationId}`)
+        api<PhaseLayers>(`/forecast/layers/${selectedLocationId}`),
+        api<Phase20Report>(`/validation/report/${selectedLocationId}`),
+        api<Phase35Report>(`/forecast/system-report/${selectedLocationId}`)
       ]);
 
       if (!isActive) return;
@@ -774,9 +774,9 @@ export default function Home() {
         `/normalization/records?location_id=${selectedLocationId}&limit=12`
       );
       const state = await api<CurrentState>(`/current-state/${selectedLocationId}`);
-      const layers = await api<PhaseLayers>(`/phase-layers/${selectedLocationId}`);
-      const phase20 = await api<Phase20Report>(`/phase-20/${selectedLocationId}`);
-      const phase35 = await api<Phase35Report>(`/phase-35/${selectedLocationId}`);
+      const layers = await api<PhaseLayers>(`/forecast/layers/${selectedLocationId}`);
+      const phase20 = await api<Phase20Report>(`/validation/report/${selectedLocationId}`);
+      const phase35 = await api<Phase35Report>(`/forecast/system-report/${selectedLocationId}`);
       setRawRecords(records);
       setNormalizedRecords(normalized);
       setCurrentState(state);
@@ -802,10 +802,8 @@ export default function Home() {
       await api<{ created_records: number }>(`/validation/run/${selectedLocationId}`, {
         method: "POST"
       });
-      const [phase20, phase35] = await Promise.all([
-        api<Phase20Report>(`/phase-20/${selectedLocationId}`),
-        api<Phase35Report>(`/phase-35/${selectedLocationId}`)
-      ]);
+      const phase20 = await api<Phase20Report>(`/validation/report/${selectedLocationId}`);
+      const phase35 = await api<Phase35Report>(`/forecast/system-report/${selectedLocationId}`);
       setPhase20Report(phase20);
       setPhase35Report(phase35);
       api<BackgroundCollectionStatus>("/collection/status")
