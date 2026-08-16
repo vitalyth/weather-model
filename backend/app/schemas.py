@@ -40,6 +40,18 @@ class LocationSearchResult(BaseModel):
     admin1: str | None = None
 
 
+class CurrentWeatherRead(BaseModel):
+    location_id: int
+    source: str
+    temperature_f: float | None = None
+    relative_humidity_percent: float | None = None
+    wind_speed_mph: float | None = None
+    weather_code: int | None = None
+    condition: str
+    observed_at: datetime | None = None
+    timezone: str
+
+
 class TemperaturePrediction(BaseModel):
     temperature_f: float
     apparent_temperature_f: float

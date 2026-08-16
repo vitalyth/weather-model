@@ -27,13 +27,13 @@ import {
   TrendingUp,
   Trash2,
   Umbrella,
-  Wind,
   X
 } from "lucide-react";
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { DragEvent, FormEvent, useEffect, useMemo, useState } from "react";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
 const SELECTED_LOCATION_STORAGE_KEY = "weather-model:selected-location-id";
+const LOCATION_ORDER_STORAGE_KEY = "weather-model:location-order";
 
 type Location = {
   id: number;
@@ -172,6 +172,18 @@ type CurrentState = {
   values: Record<string, CurrentStateValue>;
   trends: Record<string, number | string | null>;
   evidence_record_count: number;
+};
+
+type CurrentWeather = {
+  location_id: number;
+  source: string;
+  temperature_f: number | null;
+  relative_humidity_percent: number | null;
+  wind_speed_mph: number | null;
+  weather_code: number | null;
+  condition: string;
+  observed_at: string | null;
+  timezone: string;
 };
 
 type PhaseLayers = {
@@ -326,6 +338,38 @@ function formatDate(value: string) {
   }).format(date);
 }
 
+function readLocationOrder() {
+  if (typeof window === "undefined") return [];
+
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(LOCATION_ORDER_STORAGE_KEY) ?? "[]");
+    return Array.isArray(parsed)
+      ? parsed.filter((id): id is number => Number.isInteger(id))
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveLocationOrder(locations: Location[]) {
+  window.localStorage.setItem(
+    LOCATION_ORDER_STORAGE_KEY,
+    JSON.stringify(locations.map((location) => location.id))
+  );
+}
+
+function applyLocationOrder(locations: Location[]) {
+  const order = readLocationOrder();
+  const orderIndex = new Map(order.map((id, index) => [id, index]));
+
+  return [...locations].sort((a, b) => {
+    const aIndex = orderIndex.get(a.id) ?? Number.MAX_SAFE_INTEGER;
+    const bIndex = orderIndex.get(b.id) ?? Number.MAX_SAFE_INTEGER;
+    if (aIndex !== bIndex) return aIndex - bIndex;
+    return a.name.localeCompare(b.name);
+  });
+}
+
 function formatValue(value?: CurrentStateValue) {
   if (!value) return "No data";
   const displayValue = value.value ?? value.text;
@@ -341,6 +385,33 @@ function formatTrend(value: number | string | null | undefined, suffix = "") {
 function formatMetric(value: number | null | undefined, suffix = "") {
   if (value === null || value === undefined) return "No data";
   return `${value}${suffix}`;
+}
+
+function compactCurrentWeather(weather: CurrentWeather | null | undefined) {
+  if (weather === undefined) return { primary: "--", secondary: "Loading weather", condition: "Live" };
+  if (weather === null) {
+    return { primary: "N/A", secondary: "Weather unavailable. Try again shortly", condition: "Live" };
+  }
+
+  const primary =
+    weather.temperature_f === null || weather.temperature_f === undefined
+      ? "N/A"
+      : `${Math.round(weather.temperature_f)}F`;
+  const details = [
+    weather.condition,
+    weather.wind_speed_mph === null || weather.wind_speed_mph === undefined
+      ? null
+      : `Wind ${Math.round(weather.wind_speed_mph)} mph`,
+    weather.relative_humidity_percent === null || weather.relative_humidity_percent === undefined
+      ? null
+      : `Humidity ${Math.round(weather.relative_humidity_percent)}%`,
+  ].filter(Boolean);
+
+  return {
+    primary,
+    secondary: details.join(" · ") || weather.source,
+    condition: weather.condition,
+  };
 }
 
 function conditionLabel(point: ForecastPoint) {
@@ -369,6 +440,28 @@ function WeatherIcon({ point, size = 26 }: { point: ForecastPoint; size?: number
   if (point.atmosphere.cloud_cover_percent >= 70) return <Cloud size={size} />;
   if (point.atmosphere.cloud_cover_percent >= 35) return <CloudSun size={size} />;
   return <Sun size={size} />;
+}
+
+function CurrentWeatherIcon({
+  weather,
+  size = 20,
+}: {
+  weather: CurrentWeather | null | undefined;
+  size?: number;
+}) {
+  if (weather === undefined) return <Loader2 className="spin" size={size} />;
+  if (weather === null || weather.weather_code === null) return <CloudSun size={size} />;
+
+  const code = weather.weather_code;
+  if (code === 0) return <Sun size={size} />;
+  if ([1, 2, 3].includes(code)) return <CloudSun size={size} />;
+  if ([45, 48].includes(code)) return <CloudFog size={size} />;
+  if ([51, 53, 55, 56, 57, 61, 63, 65, 66, 67, 80, 81, 82].includes(code)) {
+    return <CloudRain size={size} />;
+  }
+  if ([71, 73, 75, 77, 85, 86].includes(code)) return <CloudSnow size={size} />;
+  if ([95, 96, 99].includes(code)) return <CloudRain size={size} />;
+  return <CloudSun size={size} />;
 }
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
@@ -604,6 +697,12 @@ function AddLocationDialog({
 
 export default function Home() {
   const [locations, setLocations] = useState<Location[]>([]);
+  const [locationCurrentWeather, setLocationCurrentWeather] = useState<
+    Record<number, CurrentWeather | null>
+  >({});
+  const [draggingLocationId, setDraggingLocationId] = useState<number | null>(null);
+  const [dragOverLocationId, setDragOverLocationId] = useState<number | null>(null);
+  const [dragStartPoint, setDragStartPoint] = useState<{ x: number; y: number } | null>(null);
   const [providers, setProviders] = useState<WeatherProvider[]>([]);
   const [collectionStatus, setCollectionStatus] = useState<BackgroundCollectionStatus | null>(
     null
@@ -630,13 +729,15 @@ export default function Home() {
   useEffect(() => {
     api<Location[]>("/locations")
       .then((items) => {
-        setLocations(items);
+        const orderedLocations = applyLocationOrder(items);
+        setLocations(orderedLocations);
+        saveLocationOrder(orderedLocations);
         const savedLocationId = Number(
           window.localStorage.getItem(SELECTED_LOCATION_STORAGE_KEY)
         );
-        const savedLocation = items.find((location) => location.id === savedLocationId);
-        if (savedLocation?.id ?? items[0]?.id) setApiLoading(true);
-        setSelectedLocationId(savedLocation?.id ?? items[0]?.id ?? null);
+        const savedLocation = orderedLocations.find((location) => location.id === savedLocationId);
+        if (savedLocation?.id ?? orderedLocations[0]?.id) setApiLoading(true);
+        setSelectedLocationId(savedLocation?.id ?? orderedLocations[0]?.id ?? null);
       })
       .catch(() => setError("Start the FastAPI backend to load saved locations."));
 
@@ -658,6 +759,33 @@ export default function Home() {
 
     return () => window.clearInterval(interval);
   }, []);
+
+  useEffect(() => {
+    if (locations.length === 0) {
+      return;
+    }
+
+    let isActive = true;
+    const loadLocationWeather = async () => {
+      const results = await Promise.allSettled(
+        locations.map((location) => api<CurrentWeather>(`/weather/current/${location.id}`))
+      );
+      if (!isActive) return;
+
+      const nextWeather: Record<number, CurrentWeather | null> = {};
+      locations.forEach((location, index) => {
+        const result = results[index];
+        nextWeather[location.id] = result.status === "fulfilled" ? result.value : null;
+      });
+      setLocationCurrentWeather(nextWeather);
+    };
+
+    loadLocationWeather();
+
+    return () => {
+      isActive = false;
+    };
+  }, [locations]);
 
   useEffect(() => {
     if (!selectedLocationId) {
@@ -694,7 +822,25 @@ export default function Home() {
       setNormalizedRecords(
         normalizedResult.status === "fulfilled" ? normalizedResult.value : []
       );
-      setCurrentState(currentResult.status === "fulfilled" ? currentResult.value : null);
+      const nextCurrentState = currentResult.status === "fulfilled" ? currentResult.value : null;
+      setCurrentState(nextCurrentState);
+      api<CurrentWeather>(`/weather/current/${selectedLocationId}`)
+        .then((weather) => {
+          if (isActive) {
+            setLocationCurrentWeather((current) => ({
+              ...current,
+              [selectedLocationId]: weather,
+            }));
+          }
+        })
+        .catch(() => {
+          if (isActive) {
+            setLocationCurrentWeather((current) => ({
+              ...current,
+              [selectedLocationId]: null,
+            }));
+          }
+        });
       setPhaseLayers(
         phaseLayersResult.status === "fulfilled" ? phaseLayersResult.value : null
       );
@@ -744,7 +890,11 @@ export default function Home() {
           timezone: form.timezone
         })
       });
-      setLocations((current) => [...current, location].sort((a, b) => a.name.localeCompare(b.name)));
+      setLocations((current) => {
+        const nextLocations = [...current, location];
+        saveLocationOrder(nextLocations);
+        return nextLocations;
+      });
       window.localStorage.setItem(SELECTED_LOCATION_STORAGE_KEY, String(location.id));
       setApiLoading(true);
       setSelectedLocationId(location.id);
@@ -780,6 +930,19 @@ export default function Home() {
       setRawRecords(records);
       setNormalizedRecords(normalized);
       setCurrentState(state);
+      api<CurrentWeather>(`/weather/current/${selectedLocationId}`)
+        .then((weather) =>
+          setLocationCurrentWeather((current) => ({
+            ...current,
+            [selectedLocationId]: weather,
+          }))
+        )
+        .catch(() =>
+          setLocationCurrentWeather((current) => ({
+            ...current,
+            [selectedLocationId]: null,
+          }))
+        );
       setPhaseLayers(layers);
       setPhase20Report(phase20);
       setPhase35Report(phase35);
@@ -829,6 +992,7 @@ export default function Home() {
       await api<void>(`/locations/${location.id}`, { method: "DELETE" });
       setLocations((current) => {
         const nextLocations = current.filter((item) => item.id !== location.id);
+        saveLocationOrder(nextLocations);
         if (selectedLocationId === location.id) {
           const nextSelectedId = nextLocations[0]?.id ?? null;
           if (nextSelectedId) {
@@ -848,6 +1012,61 @@ export default function Home() {
     } finally {
       setLoading(false);
     }
+  }
+
+  function handleLocationDragStart(event: DragEvent<HTMLElement>, locationId: number) {
+    setDraggingLocationId(locationId);
+    setDragOverLocationId(locationId);
+    setDragStartPoint({ x: event.clientX, y: event.clientY });
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", String(locationId));
+  }
+
+  function moveLocationBefore(movedLocationId: number, targetLocationId: number) {
+    if (movedLocationId === targetLocationId) return;
+
+    setLocations((current) => {
+      const fromIndex = current.findIndex((location) => location.id === movedLocationId);
+      const toIndex = current.findIndex((location) => location.id === targetLocationId);
+      if (fromIndex < 0 || toIndex < 0 || fromIndex === toIndex) return current;
+
+      const nextLocations = [...current];
+      const [movedLocation] = nextLocations.splice(fromIndex, 1);
+      nextLocations.splice(toIndex, 0, movedLocation);
+      saveLocationOrder(nextLocations);
+      return nextLocations;
+    });
+  }
+
+  function handleLocationDragOver(event: DragEvent<HTMLElement>, targetLocationId: number) {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+
+    if (dragStartPoint) {
+      const horizontalMovement = Math.abs(event.clientX - dragStartPoint.x);
+      const verticalMovement = Math.abs(event.clientY - dragStartPoint.y);
+      if (horizontalMovement > verticalMovement) return;
+    }
+
+    setDragOverLocationId(targetLocationId);
+  }
+
+  function handleLocationDrop(event: DragEvent<HTMLElement>, targetLocationId: number) {
+    event.preventDefault();
+    const movedLocationId =
+      draggingLocationId ?? Number(event.dataTransfer.getData("text/plain"));
+
+    if (!Number.isInteger(movedLocationId) || movedLocationId === targetLocationId) {
+      setDraggingLocationId(null);
+      setDragOverLocationId(null);
+      setDragStartPoint(null);
+      return;
+    }
+
+    moveLocationBefore(movedLocationId, targetLocationId);
+    setDraggingLocationId(null);
+    setDragOverLocationId(null);
+    setDragStartPoint(null);
   }
 
   function closeAddLocationDialog() {
@@ -907,36 +1126,50 @@ export default function Home() {
               </button>
             </div>
             <div className="location-list">
-              {locations.map((location) => (
-                <div
-                  className={`location-row ${selectedLocationId === location.id ? "active" : ""}`}
-                  key={location.id}
-                >
-                  <button
-                    className="location-button"
-                    onClick={() => handleSelectLocation(location.id)}
-                    type="button"
+              {locations.map((location) => {
+                const currentWeather = locationCurrentWeather[location.id];
+                const weather = compactCurrentWeather(locationCurrentWeather[location.id]);
+                return (
+                  <div
+                    className={`location-row ${selectedLocationId === location.id ? "active" : ""} ${
+                      draggingLocationId === location.id ? "dragging" : ""
+                    } ${
+                      dragOverLocationId === location.id && draggingLocationId !== location.id
+                        ? "drag-over"
+                        : ""
+                    }`}
+                    draggable
+                    key={location.id}
+                    onDragEnd={() => {
+                      setDraggingLocationId(null);
+                      setDragOverLocationId(null);
+                      setDragStartPoint(null);
+                    }}
+                    onDragOver={(event) => handleLocationDragOver(event, location.id)}
+                    onDragStart={(event) => handleLocationDragStart(event, location.id)}
+                    onDrop={(event) => handleLocationDrop(event, location.id)}
                   >
-                    <MapPin size={17} />
-                    <strong>
-                      {location.name}
-                      <span>
-                        {location.latitude.toFixed(3)}, {location.longitude.toFixed(3)}
-                      </span>
-                    </strong>
-                  </button>
-                  <button
-                    aria-label={`Remove ${location.name}`}
-                    className="icon-button danger"
-                    disabled={loading}
-                    onClick={() => handleDeleteLocation(location)}
-                    title={`Remove ${location.name}`}
-                    type="button"
-                  >
-                    <Trash2 size={17} />
-                  </button>
-                </div>
-              ))}
+                    <button
+                      className="location-button"
+                      onClick={() => handleSelectLocation(location.id)}
+                      type="button"
+                    >
+                      <MapPin size={17} />
+                      <strong>
+                        {location.name}
+                        <span>
+                          {location.latitude.toFixed(3)}, {location.longitude.toFixed(3)}
+                        </span>
+                      </strong>
+                    </button>
+                    <div className="location-weather-tile" title={weather.secondary}>
+                      <CurrentWeatherIcon weather={currentWeather} size={19} />
+                      <b>{weather.primary}</b>
+                      <small>{weather.condition}</small>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </section>
         </aside>
@@ -1010,15 +1243,28 @@ export default function Home() {
                 </p>
               ) : null}
             </div>
-            <button
-              className="primary-button"
-              disabled={!selectedLocationId || loading}
-              onClick={handleGenerateForecast}
-              type="button"
-            >
-              {loading ? <Loader2 className="spin" size={17} /> : <RefreshCw size={17} />}
-              Generate
-            </button>
+            <div className="forecast-actions">
+              {selectedLocation ? (
+                <button
+                  className="secondary-button danger"
+                  disabled={loading}
+                  onClick={() => handleDeleteLocation(selectedLocation)}
+                  type="button"
+                >
+                  <Trash2 size={17} />
+                  Remove
+                </button>
+              ) : null}
+              <button
+                className="primary-button"
+                disabled={!selectedLocationId || loading}
+                onClick={handleGenerateForecast}
+                type="button"
+              >
+                {loading ? <Loader2 className="spin" size={17} /> : <RefreshCw size={17} />}
+                Generate
+              </button>
+            </div>
           </div>
 
           {leadPoint ? (

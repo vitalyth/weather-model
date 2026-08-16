@@ -5,7 +5,7 @@ from fastapi.testclient import TestClient
 from app.database import Base, engine
 from app.ingestion.providers import SourcePayload
 from app.main import app
-from app.services import forecast_service, geocoding_service
+from app.services import current_weather_service, forecast_service, geocoding_service
 
 
 def fake_open_meteo_payload() -> dict:
@@ -222,6 +222,38 @@ def test_location_search_returns_geocoded_candidates(monkeypatch) -> None:
     assert result["name"] == "Lexington, US"
     assert result["latitude"] == 42.4473
     assert result["timezone"] == "America/New_York"
+
+
+def test_current_weather_endpoint_returns_live_weather_contract(monkeypatch) -> None:
+    client = TestClient(app)
+    location = client.post(
+        "/locations",
+        json={"name": "Lexington, MA", "latitude": 42.4473, "longitude": -71.2245},
+    ).json()
+
+    monkeypatch.setattr(
+        current_weather_service,
+        "fetch_current_weather",
+        lambda location: {
+            "location_id": location.id,
+            "source": "Open-Meteo current weather",
+            "temperature_f": 61.7,
+            "relative_humidity_percent": 69,
+            "wind_speed_mph": 4.7,
+            "weather_code": 0,
+            "condition": "Clear",
+            "observed_at": datetime(2026, 8, 16, 0, 0, tzinfo=UTC),
+            "timezone": "America/New_York",
+        },
+    )
+
+    response = client.get(f"/weather/current/{location['id']}")
+
+    assert response.status_code == 200
+    weather = response.json()
+    assert weather["source"] == "Open-Meteo current weather"
+    assert weather["temperature_f"] == 61.7
+    assert weather["condition"] == "Clear"
 
 
 def test_forecast_snapshots_are_not_overwritten() -> None:

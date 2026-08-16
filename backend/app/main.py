@@ -10,10 +10,12 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.database import get_db, init_db
+from app.ingestion.providers import WeatherProviderError
 from app.models import Location, NormalizedWeatherRecord, RawWeatherRecord
 from app.schemas import (
     BackgroundCollectionStatusRead,
     CurrentStateRead,
+    CurrentWeatherRead,
     ErrorAnalysisRead,
     FairComparisonRead,
     FinalScorecardRead,
@@ -33,7 +35,7 @@ from app.schemas import (
     VisualizationSummaryRead,
     WeatherProviderRead,
 )
-from app.services import forecast_service, geocoding_service
+from app.services import current_weather_service, forecast_service, geocoding_service
 from app.services.background_collection_service import (
     background_collection_status,
     run_background_collection_loop,
@@ -52,7 +54,6 @@ from app.services.completion_service import (
 )
 from app.services.current_state_service import build_current_state
 from app.services.forecast_service import (
-    ForecastProviderError,
     create_forecast_snapshot,
     get_forecast_snapshot,
     list_forecast_snapshots,
@@ -162,7 +163,7 @@ def create_forecast(location_id: int, db: DbSession) -> ForecastSnapshotRead:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Location not found")
     try:
         return create_forecast_snapshot(db, location)
-    except ForecastProviderError as exc:
+    except WeatherProviderError as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Real forecast provider is unavailable. Try again shortly.",
@@ -239,6 +240,20 @@ def read_current_state(location_id: int, db: DbSession) -> CurrentStateRead:
     if location is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Location not found")
     return build_current_state(db, location)
+
+
+@app.get("/weather/current/{location_id}", response_model=CurrentWeatherRead)
+def read_current_weather(location_id: int, db: DbSession) -> dict[str, object]:
+    location = db.get(Location, location_id)
+    if location is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Location not found")
+    try:
+        return current_weather_service.fetch_current_weather(location)
+    except WeatherProviderError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Current weather provider is unavailable. Try again shortly.",
+        ) from exc
 
 
 def _get_location_or_404(location_id: int, db: DbSession) -> Location:
