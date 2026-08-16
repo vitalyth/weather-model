@@ -5,6 +5,7 @@ services:
     restart: unless-stopped
     environment:
       WEATHER_DATABASE_URL: sqlite:////app/data/weather_model.db
+      WEATHER_CORS_ORIGIN_REGEX: "https?://.*"
       WEATHER_BACKGROUND_COLLECTION_ENABLED: "true"
       WEATHER_BACKGROUND_COLLECTION_INTERVAL_MINUTES: "60"
     ports:
