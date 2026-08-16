@@ -23,6 +23,8 @@ services:
     image: weather-model-frontend:local
     container_name: weather-model-frontend
     restart: unless-stopped
+    environment:
+      WEATHER_API_INTERNAL_URL: http://backend:8000
     depends_on:
       backend:
         condition: service_healthy
