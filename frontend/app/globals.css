@@ -86,16 +86,6 @@ button {
   margin: 2px 0 0;
 }
 
-.phase-badge {
-  background: var(--panel-strong);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  color: var(--accent-strong);
-  font-weight: 700;
-  padding: 8px 10px;
-  white-space: nowrap;
-}
-
 .main-grid {
   display: grid;
   gap: 24px;
@@ -128,16 +118,28 @@ button {
   justify-content: space-between;
 }
 
-.section-title span {
-  align-items: center;
+.title-label {
+  align-items: baseline;
   display: inline-flex;
   gap: 8px;
   min-width: 0;
 }
 
+.title-label > svg {
+  background: transparent;
+  border: 0;
+  display: block;
+  flex: 0 0 1em;
+  height: 1em;
+  padding: 0;
+  transform: translateY(0.12em);
+  width: 1em;
+}
+
 .section-title h2,
 .section-title h3 {
   font-size: 1rem;
+  line-height: 1.2;
   margin: 0;
 }
 
@@ -799,23 +801,26 @@ button {
 }
 
 .forecast-table {
+  overflow-x: auto;
   padding: 4px;
   width: 100%;
 }
 
 table {
   border-collapse: collapse;
-  table-layout: fixed;
+  min-width: max-content;
+  table-layout: auto;
   width: 100%;
 }
 
 th,
 td {
   border-bottom: 1px solid var(--border);
+  overflow-wrap: normal;
   padding: 12px;
   text-align: left;
-  overflow-wrap: anywhere;
   vertical-align: top;
+  white-space: nowrap;
 }
 
 th {
@@ -950,32 +955,7 @@ th {
     grid-template-columns: 1fr;
   }
 
-  .forecast-table table,
-  .forecast-table thead,
-  .forecast-table tbody,
-  .forecast-table tr,
-  .forecast-table th,
-  .forecast-table td {
-    display: block;
-  }
-
-  .forecast-table thead {
-    display: none;
-  }
-
-  .forecast-table tr {
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    margin-bottom: 10px;
-    overflow: hidden;
-  }
-
-  .forecast-table td {
-    border-bottom: 1px solid var(--border);
-    white-space: normal;
-  }
-
-  .forecast-table td:last-child {
-    border-bottom: 0;
+  .forecast-table {
+    -webkit-overflow-scrolling: touch;
   }
 }

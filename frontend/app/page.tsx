@@ -310,6 +310,8 @@ const defaultLocation = {
   timezone: "America/New_York"
 };
 
+type LocationForm = typeof defaultLocation;
+
 function formatDate(value: string) {
   const hasTimezone = /(?:Z|[+-]\d{2}:?\d{2})$/.test(value);
   const date = new Date(hasTimezone ? value : `${value}Z`);
@@ -389,6 +391,217 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
+function AddLocationDialog({
+  loading,
+  onClose,
+  onCreate
+}: {
+  loading: boolean;
+  onClose: () => void;
+  onCreate: (form: LocationForm) => void;
+}) {
+  const [form, setForm] = useState<LocationForm>(defaultLocation);
+  const [locationQuery, setLocationQuery] = useState("");
+  const [locationSearchResults, setLocationSearchResults] = useState<LocationSearchResult[]>([]);
+  const [locationSearchLoading, setLocationSearchLoading] = useState(false);
+
+  useEffect(() => {
+    const query = locationQuery.trim();
+    if (query.length < 2) return;
+
+    let isActive = true;
+    const timeout = window.setTimeout(() => {
+      setLocationSearchLoading(true);
+      api<LocationSearchResult[]>(
+        `/locations/search?query=${encodeURIComponent(query)}&limit=6`
+      )
+        .then((results) => {
+          if (isActive) setLocationSearchResults(results);
+        })
+        .catch(() => {
+          if (isActive) setLocationSearchResults([]);
+        })
+        .finally(() => {
+          if (isActive) setLocationSearchLoading(false);
+        });
+    }, 250);
+
+    return () => {
+      isActive = false;
+      window.clearTimeout(timeout);
+    };
+  }, [locationQuery]);
+
+  function handleLocationSearchChange(value: string) {
+    setLocationQuery(value);
+    if (value.trim().length < 2) {
+      setLocationSearchResults([]);
+      setLocationSearchLoading(false);
+    }
+  }
+
+  function applyLocationSearchResult(result: LocationSearchResult) {
+    setForm({
+      name: result.display_name,
+      latitude: String(result.latitude),
+      longitude: String(result.longitude),
+      elevation_m: result.elevation_m === null ? "" : String(result.elevation_m),
+      timezone: result.timezone
+    });
+  }
+
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    onCreate(form);
+  }
+
+  return (
+    <div className="dialog-backdrop" role="presentation" onMouseDown={onClose}>
+      <section
+        aria-labelledby="add-location-title"
+        aria-modal="true"
+        className="dialog"
+        onMouseDown={(event) => event.stopPropagation()}
+        role="dialog"
+      >
+        <div className="dialog-header">
+          <div>
+            <h2 id="add-location-title">Add Location</h2>
+          </div>
+          <button
+            aria-label="Close add location dialog"
+            className="icon-button"
+            onClick={onClose}
+            title="Close"
+            type="button"
+          >
+            <X size={17} />
+          </button>
+        </div>
+        <form className="form-grid" onSubmit={handleSubmit}>
+          <div className="field">
+            <label htmlFor="location-search">Search city or place</label>
+            <div className="search-input-shell">
+              <MapPin size={17} />
+              <input
+                autoComplete="off"
+                autoFocus
+                id="location-search"
+                onChange={(event) => handleLocationSearchChange(event.target.value)}
+                placeholder="Boston, Lexington MA, Tokyo..."
+                value={locationQuery}
+              />
+              {locationSearchLoading ? <Loader2 className="spin" size={17} /> : null}
+            </div>
+            {locationQuery.trim().length >= 2 ? (
+              <div className="search-results">
+                {locationSearchResults.map((result) => {
+                  const isSelected =
+                    form.latitude === String(result.latitude) &&
+                    form.longitude === String(result.longitude);
+                  return (
+                    <button
+                      className={`search-result ${isSelected ? "active" : ""}`}
+                      key={`${result.id ?? result.display_name}-${result.latitude}-${result.longitude}`}
+                      onClick={() => applyLocationSearchResult(result)}
+                      type="button"
+                    >
+                      <span className="search-result-icon">
+                        <MapPin size={16} />
+                      </span>
+                      <span>
+                        <strong>{result.display_name}</strong>
+                        <small>{result.subtitle || result.timezone}</small>
+                      </span>
+                    </button>
+                  );
+                })}
+                {!locationSearchLoading && locationSearchResults.length === 0 ? (
+                  <p className="search-empty">No matches yet. Try a city and state or country.</p>
+                ) : null}
+              </div>
+            ) : (
+              <p className="field-hint">Type at least 2 letters, then choose a match.</p>
+            )}
+          </div>
+          <div className="field">
+            <label htmlFor="name">Name</label>
+            <input
+              id="name"
+              onChange={(event) => setForm({ ...form, name: event.target.value })}
+              required
+              value={form.name}
+            />
+          </div>
+          <div className="form-columns">
+            <div className="field">
+              <label htmlFor="latitude">Latitude</label>
+              <input
+                id="latitude"
+                max="90"
+                min="-90"
+                onChange={(event) => setForm({ ...form, latitude: event.target.value })}
+                required
+                step="any"
+                type="number"
+                value={form.latitude}
+              />
+            </div>
+            <div className="field">
+              <label htmlFor="longitude">Longitude</label>
+              <input
+                id="longitude"
+                max="180"
+                min="-180"
+                onChange={(event) => setForm({ ...form, longitude: event.target.value })}
+                required
+                step="any"
+                type="number"
+                value={form.longitude}
+              />
+            </div>
+          </div>
+          <div className="form-columns">
+            <div className="field">
+              <label htmlFor="elevation">Elevation m</label>
+              <input
+                id="elevation"
+                onChange={(event) => setForm({ ...form, elevation_m: event.target.value })}
+                step="any"
+                type="number"
+                value={form.elevation_m}
+              />
+            </div>
+            <div className="field">
+              <label htmlFor="timezone">Timezone</label>
+              <input
+                id="timezone"
+                onChange={(event) => setForm({ ...form, timezone: event.target.value })}
+                required
+                value={form.timezone}
+              />
+            </div>
+          </div>
+          <div className="actions end">
+            <button
+              className="secondary-button"
+              disabled={loading}
+              onClick={onClose}
+              type="button"
+            >
+              Cancel
+            </button>
+            <button className="primary-button" disabled={loading} type="submit">
+              {loading ? <Loader2 className="spin" size={17} /> : <Plus size={17} />}
+              Add
+            </button>
+          </div>
+        </form>
+      </section>
+    </div>
+  );
+}
+
 export default function Home() {
   const [locations, setLocations] = useState<Location[]>([]);
   const [providers, setProviders] = useState<WeatherProvider[]>([]);
@@ -403,11 +616,7 @@ export default function Home() {
   const [phase35Report, setPhase35Report] = useState<Phase35Report | null>(null);
   const [selectedLocationId, setSelectedLocationId] = useState<number | null>(null);
   const [forecast, setForecast] = useState<ForecastSnapshot | null>(null);
-  const [form, setForm] = useState(defaultLocation);
   const [isAddLocationOpen, setIsAddLocationOpen] = useState(false);
-  const [locationQuery, setLocationQuery] = useState("");
-  const [locationSearchResults, setLocationSearchResults] = useState<LocationSearchResult[]>([]);
-  const [locationSearchLoading, setLocationSearchLoading] = useState(false);
   const [apiLoading, setApiLoading] = useState(false);
   const [validationLoading, setValidationLoading] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -501,35 +710,6 @@ export default function Home() {
     };
   }, [selectedLocationId]);
 
-  useEffect(() => {
-    if (!isAddLocationOpen) return;
-
-    const query = locationQuery.trim();
-    if (query.length < 2) return;
-
-    let isActive = true;
-    const timeout = window.setTimeout(() => {
-      setLocationSearchLoading(true);
-      api<LocationSearchResult[]>(
-        `/locations/search?query=${encodeURIComponent(query)}&limit=6`
-      )
-        .then((results) => {
-          if (isActive) setLocationSearchResults(results);
-        })
-        .catch(() => {
-          if (isActive) setLocationSearchResults([]);
-        })
-        .finally(() => {
-          if (isActive) setLocationSearchLoading(false);
-        });
-    }, 250);
-
-    return () => {
-      isActive = false;
-      window.clearTimeout(timeout);
-    };
-  }, [isAddLocationOpen, locationQuery]);
-
   function clearLocationDetails() {
     setForecast(null);
     setRawRecords([]);
@@ -549,26 +729,7 @@ export default function Home() {
     setSelectedLocationId(locationId);
   }
 
-  function handleLocationSearchChange(value: string) {
-    setLocationQuery(value);
-    if (value.trim().length < 2) {
-      setLocationSearchResults([]);
-      setLocationSearchLoading(false);
-    }
-  }
-
-  function applyLocationSearchResult(result: LocationSearchResult) {
-    setForm({
-      name: result.display_name,
-      latitude: String(result.latitude),
-      longitude: String(result.longitude),
-      elevation_m: result.elevation_m === null ? "" : String(result.elevation_m),
-      timezone: result.timezone
-    });
-  }
-
-  async function handleCreateLocation(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  async function handleCreateLocation(form: LocationForm) {
     setError(null);
     setLoading(true);
 
@@ -588,10 +749,6 @@ export default function Home() {
       setApiLoading(true);
       setSelectedLocationId(location.id);
       clearLocationDetails();
-      setForm(defaultLocation);
-      setLocationQuery("");
-      setLocationSearchResults([]);
-      setLocationSearchLoading(false);
       setIsAddLocationOpen(false);
     } catch {
       setError("Location could not be created. Check the values and API connection.");
@@ -697,10 +854,6 @@ export default function Home() {
 
   function closeAddLocationDialog() {
     setIsAddLocationOpen(false);
-    setForm(defaultLocation);
-    setLocationQuery("");
-    setLocationSearchResults([]);
-    setLocationSearchLoading(false);
   }
 
   const leadPoint = forecast?.points[0];
@@ -735,14 +888,13 @@ export default function Home() {
             <p>Real-data ingestion and frozen forecast snapshots</p>
           </div>
         </div>
-        <span className="phase-badge">Phase 35: Scientific Forecast System</span>
       </header>
 
       <div className="main-grid">
         <aside className="panel sidebar">
           <section>
             <div className="section-title split">
-              <span>
+              <span className="title-label">
                 <MapPin size={18} />
                 <h2>Locations</h2>
               </span>
@@ -800,8 +952,8 @@ export default function Home() {
                 <BadgeCheck size={18} />
               </span>
               <div>
-                <strong>Actual Phase</strong>
-                <p>Phase 35 completion is active. The app now covers forecast generation, frozen storage, validation, benchmarking, transparency, monitoring, and final scorecards.</p>
+                <strong>Forecast System</strong>
+                <p>Real data collection, frozen snapshots, validation, benchmarking, transparency, monitoring, and scorecards are enabled.</p>
               </div>
             </div>
             <div className="status-panel">
@@ -964,8 +1116,10 @@ export default function Home() {
 
               <section className="panel hourly-visual-panel">
                 <div className="section-title">
-                  <TrendingUp size={18} />
-                  <h3>Next 18 Hours</h3>
+                  <span className="title-label">
+                    <TrendingUp size={18} />
+                    <h3>Next 18 Hours</h3>
+                  </span>
                 </div>
                 <div className="hourly-strip">
                   {hourlyPreview.map((point) => {
@@ -1014,9 +1168,11 @@ export default function Home() {
 
               <section className="phase-grid">
                 <div className="panel table-shell">
-                  <div className="section-title split">
-                    <BadgeCheck size={18} />
-                    <h3>Final Scorecard</h3>
+                  <div className="section-title">
+                    <span className="title-label">
+                      <BadgeCheck size={18} />
+                      <h3>Final Scorecard</h3>
+                    </span>
                   </div>
                   <div className="quality-strip">
                     <div>
@@ -1060,9 +1216,11 @@ export default function Home() {
                 </div>
 
                 <div className="panel table-shell">
-                  <div className="section-title split">
-                    <Filter size={18} />
-                    <h3>Transparency & Monitoring</h3>
+                  <div className="section-title">
+                    <span className="title-label">
+                      <Filter size={18} />
+                      <h3>Transparency & Monitoring</h3>
+                    </span>
                   </div>
                   <div className="record-list">
                     <div className="record-row">
@@ -1096,7 +1254,7 @@ export default function Home() {
               <section className="phase-grid">
                 <div className="panel table-shell">
                   <div className="section-title split">
-                    <span>
+                    <span className="title-label">
                       <BadgeCheck size={18} />
                       <h3>Validation Box</h3>
                     </span>
@@ -1153,8 +1311,10 @@ export default function Home() {
 
                 <div className="panel table-shell">
                   <div className="section-title">
-                    <TrendingUp size={18} />
-                    <h3>ML & Segments</h3>
+                    <span className="title-label">
+                      <TrendingUp size={18} />
+                      <h3>ML & Segments</h3>
+                    </span>
                   </div>
                   <div className="record-list">
                     <div className="record-row">
@@ -1193,8 +1353,10 @@ export default function Home() {
               <section className="phase-grid">
                 <div className="panel table-shell">
                   <div className="section-title">
-                    <Database size={18} />
-                    <h3>Layers 5-10</h3>
+                    <span className="title-label">
+                      <Database size={18} />
+                      <h3>Layers 5-10</h3>
+                    </span>
                   </div>
                   <div className="quality-strip">
                     <div>
@@ -1242,8 +1404,10 @@ export default function Home() {
 
                 <div className="panel table-shell">
                   <div className="section-title">
-                    <Filter size={18} />
-                    <h3>Learning Readiness</h3>
+                    <span className="title-label">
+                      <Filter size={18} />
+                      <h3>Learning Readiness</h3>
+                    </span>
                   </div>
                   <div className="record-list">
                     <div className="record-row">
@@ -1284,8 +1448,10 @@ export default function Home() {
               <section className="phase-grid">
                 <div className="panel table-shell">
                   <div className="section-title">
-                    <Gauge size={18} />
-                    <h3>Current State Layer</h3>
+                    <span className="title-label">
+                      <Gauge size={18} />
+                      <h3>Current State Layer</h3>
+                    </span>
                   </div>
                   <div className="quality-strip">
                     <div>
@@ -1314,8 +1480,10 @@ export default function Home() {
 
                 <div className="panel table-shell">
                   <div className="section-title">
-                    <TrendingUp size={18} />
-                    <h3>Atmospheric Momentum</h3>
+                    <span className="title-label">
+                      <TrendingUp size={18} />
+                      <h3>Atmospheric Momentum</h3>
+                    </span>
                   </div>
                   <div className="record-list">
                     <div className="record-row">
@@ -1343,8 +1511,10 @@ export default function Home() {
               <section className="phase-grid">
                 <div className="panel table-shell">
                   <div className="section-title">
-                    <RadioTower size={18} />
-                    <h3>Active Sources</h3>
+                    <span className="title-label">
+                      <RadioTower size={18} />
+                      <h3>Active Sources</h3>
+                    </span>
                   </div>
                   <div className="provider-list">
                     {providers.map((provider) => (
@@ -1358,8 +1528,10 @@ export default function Home() {
 
                 <div className="panel table-shell">
                   <div className="section-title">
-                    <Archive size={18} />
-                    <h3>Latest Raw Records</h3>
+                    <span className="title-label">
+                      <Archive size={18} />
+                      <h3>Latest Raw Records</h3>
+                    </span>
                   </div>
                   <div className="source-summary">
                     <strong>{rawRecords.length}</strong>
@@ -1380,8 +1552,10 @@ export default function Home() {
 
               <section className="panel table-shell">
                 <div className="section-title">
-                  <Filter size={18} />
-                  <h3>Normalization Quality Control</h3>
+                  <span className="title-label">
+                    <Filter size={18} />
+                    <h3>Normalization Quality Control</h3>
+                  </span>
                 </div>
                 <div className="quality-strip">
                   <div>
@@ -1489,159 +1663,23 @@ export default function Home() {
                 </div>
               </section>
             </>
-          ) : (
+          ) : !selectedLocationId ? (
             <div className="panel empty-state">
               <AlertTriangle size={28} />
               <p>Create or select a location, then generate the first frozen forecast snapshot.</p>
             </div>
+          ) : (
+            null
           )}
         </section>
       </div>
 
       {isAddLocationOpen ? (
-        <div className="dialog-backdrop" role="presentation" onMouseDown={closeAddLocationDialog}>
-          <section
-            aria-labelledby="add-location-title"
-            aria-modal="true"
-            className="dialog"
-            onMouseDown={(event) => event.stopPropagation()}
-            role="dialog"
-          >
-            <div className="dialog-header">
-              <div>
-                <h2 id="add-location-title">Add Location</h2>
-              </div>
-              <button
-                aria-label="Close add location dialog"
-                className="icon-button"
-                onClick={closeAddLocationDialog}
-                title="Close"
-                type="button"
-              >
-                <X size={17} />
-              </button>
-            </div>
-            <form className="form-grid" onSubmit={handleCreateLocation}>
-              <div className="field">
-                <label htmlFor="location-search">Search city or place</label>
-                <div className="search-input-shell">
-                  <MapPin size={17} />
-                  <input
-                    autoComplete="off"
-                    autoFocus
-                    id="location-search"
-                    onChange={(event) => handleLocationSearchChange(event.target.value)}
-                    placeholder="Boston, Lexington MA, Tokyo..."
-                    value={locationQuery}
-                  />
-                  {locationSearchLoading ? <Loader2 className="spin" size={17} /> : null}
-                </div>
-                {locationQuery.trim().length >= 2 ? (
-                  <div className="search-results">
-                    {locationSearchResults.map((result) => {
-                      const isSelected =
-                        form.latitude === String(result.latitude) &&
-                        form.longitude === String(result.longitude);
-                      return (
-                        <button
-                          className={`search-result ${isSelected ? "active" : ""}`}
-                          key={`${result.id ?? result.display_name}-${result.latitude}-${result.longitude}`}
-                          onClick={() => applyLocationSearchResult(result)}
-                          type="button"
-                        >
-                          <span className="search-result-icon">
-                            <MapPin size={16} />
-                          </span>
-                          <span>
-                            <strong>{result.display_name}</strong>
-                            <small>{result.subtitle || result.timezone}</small>
-                          </span>
-                        </button>
-                      );
-                    })}
-                    {!locationSearchLoading && locationSearchResults.length === 0 ? (
-                      <p className="search-empty">No matches yet. Try a city and state or country.</p>
-                    ) : null}
-                  </div>
-                ) : (
-                  <p className="field-hint">Type at least 2 letters, then choose a match.</p>
-                )}
-              </div>
-              <div className="field">
-                <label htmlFor="name">Name</label>
-                <input
-                  id="name"
-                  onChange={(event) => setForm({ ...form, name: event.target.value })}
-                  required
-                  value={form.name}
-                />
-              </div>
-              <div className="form-columns">
-                <div className="field">
-                  <label htmlFor="latitude">Latitude</label>
-                  <input
-                    id="latitude"
-                    max="90"
-                    min="-90"
-                    onChange={(event) => setForm({ ...form, latitude: event.target.value })}
-                    required
-                    step="any"
-                    type="number"
-                    value={form.latitude}
-                  />
-                </div>
-                <div className="field">
-                  <label htmlFor="longitude">Longitude</label>
-                  <input
-                    id="longitude"
-                    max="180"
-                    min="-180"
-                    onChange={(event) => setForm({ ...form, longitude: event.target.value })}
-                    required
-                    step="any"
-                    type="number"
-                    value={form.longitude}
-                  />
-                </div>
-              </div>
-              <div className="form-columns">
-                <div className="field">
-                  <label htmlFor="elevation">Elevation m</label>
-                  <input
-                    id="elevation"
-                    onChange={(event) => setForm({ ...form, elevation_m: event.target.value })}
-                    step="any"
-                    type="number"
-                    value={form.elevation_m}
-                  />
-                </div>
-                <div className="field">
-                  <label htmlFor="timezone">Timezone</label>
-                  <input
-                    id="timezone"
-                    onChange={(event) => setForm({ ...form, timezone: event.target.value })}
-                    required
-                    value={form.timezone}
-                  />
-                </div>
-              </div>
-              <div className="actions end">
-                <button
-                  className="secondary-button"
-                  disabled={loading}
-                  onClick={closeAddLocationDialog}
-                  type="button"
-                >
-                  Cancel
-                </button>
-                <button className="primary-button" disabled={loading} type="submit">
-                  {loading ? <Loader2 className="spin" size={17} /> : <Plus size={17} />}
-                  Add
-                </button>
-              </div>
-            </form>
-          </section>
-        </div>
+        <AddLocationDialog
+          loading={loading}
+          onClose={closeAddLocationDialog}
+          onCreate={handleCreateLocation}
+        />
       ) : null}
     </main>
   );
