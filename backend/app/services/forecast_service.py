@@ -1,4 +1,5 @@
 import json
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -10,7 +11,7 @@ from app.domain import HORIZON_HOURS, REQUIRED_HORIZONS, PrecipitationType
 from app.ingestion.historical_open_meteo import OpenMeteoHistoricalProvider
 from app.ingestion.metar import MetarObservationProvider
 from app.ingestion.nws import NWSForecastProvider
-from app.ingestion.open_meteo import OpenMeteoForecastProvider
+from app.ingestion.open_meteo import OpenMeteoForecastProvider, OpenMeteoModelProvider
 from app.ingestion.providers import SourcePayload, WeatherProviderError
 from app.models import ForecastSnapshot, Location, RawWeatherRecord
 from app.schemas import ForecastPoint, ForecastSnapshotRead, LocationRead
@@ -24,6 +25,9 @@ FORECAST_PROVIDER = OpenMeteoForecastProvider()
 ADDITIONAL_INGESTION_PROVIDERS = [
     NWSForecastProvider(),
     MetarObservationProvider(),
+    OpenMeteoModelProvider(source="Open-Meteo GFS", model="gfs_global"),
+    OpenMeteoModelProvider(source="Open-Meteo ICON", model="icon_global"),
+    OpenMeteoModelProvider(source="Open-Meteo ECMWF IFS", model="ecmwf_ifs025"),
     OpenMeteoHistoricalProvider(),
 ]
 OPEN_METEO_HOURLY_UNITS = {
@@ -297,11 +301,16 @@ def fetch_forecast_source(location: Location) -> SourcePayload:
 
 def fetch_additional_ingestion_sources(location: Location) -> list[SourcePayload]:
     source_payloads: list[SourcePayload] = []
-    for provider in ADDITIONAL_INGESTION_PROVIDERS:
-        try:
-            source_payloads.append(provider.fetch_forecast(location))
-        except WeatherProviderError:
-            continue
+    with ThreadPoolExecutor(max_workers=len(ADDITIONAL_INGESTION_PROVIDERS)) as executor:
+        futures = [
+            executor.submit(provider.fetch_forecast, location)
+            for provider in ADDITIONAL_INGESTION_PROVIDERS
+        ]
+        for future in as_completed(futures):
+            try:
+                source_payloads.append(future.result())
+            except WeatherProviderError:
+                continue
     return source_payloads
 
 

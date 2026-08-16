@@ -29,11 +29,25 @@ import {
   Umbrella,
   X
 } from "lucide-react";
-import { DragEvent, FormEvent, useEffect, useMemo, useState } from "react";
+import { DragEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+function resolveApiBaseUrl() {
+  if (process.env.NEXT_PUBLIC_API_BASE_URL) {
+    return process.env.NEXT_PUBLIC_API_BASE_URL;
+  }
+
+  if (typeof window !== "undefined") {
+    return `${window.location.protocol}//${window.location.hostname}:8000`;
+  }
+
+  return "http://127.0.0.1:8000";
+}
+
+const API_BASE_URL = resolveApiBaseUrl();
 const SELECTED_LOCATION_STORAGE_KEY = "weather-model:selected-location-id";
 const LOCATION_ORDER_STORAGE_KEY = "weather-model:location-order";
+const API_TIMEOUT_MS = 45000;
+const LOCATION_WEATHER_REFRESH_MS = 5 * 60 * 1000;
 
 type Location = {
   id: number;
@@ -414,6 +428,14 @@ function compactCurrentWeather(weather: CurrentWeather | null | undefined) {
   };
 }
 
+function benchmarkSummary(report: Phase20Report | null) {
+  const benchmark = report?.professional_benchmark;
+  if (!benchmark || benchmark.archived_record_count === 0) {
+    return "No regional benchmark · validation can still use METAR observations";
+  }
+  return `${benchmark.source} · ${benchmark.comparable_validation_count} comparable`;
+}
+
 function conditionLabel(point: ForecastPoint) {
   if (point.notable_weather.thunderstorms_percent >= 30) return "Storm risk";
   if (point.precipitation.precipitation_type === "snow") return "Snow";
@@ -465,13 +487,17 @@ function CurrentWeatherIcon({
 }
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), API_TIMEOUT_MS);
+
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...init,
+    signal: controller.signal,
     headers: {
       "Content-Type": "application/json",
       ...init?.headers
     }
-  });
+  }).finally(() => window.clearTimeout(timeout));
 
   if (!response.ok) {
     throw new Error(await response.text());
@@ -703,6 +729,7 @@ export default function Home() {
   const [draggingLocationId, setDraggingLocationId] = useState<number | null>(null);
   const [dragOverLocationId, setDragOverLocationId] = useState<number | null>(null);
   const [dragStartPoint, setDragStartPoint] = useState<{ x: number; y: number } | null>(null);
+  const locationWeatherFetchedAt = useRef<Record<number, number>>({});
   const [providers, setProviders] = useState<WeatherProvider[]>([]);
   const [collectionStatus, setCollectionStatus] = useState<BackgroundCollectionStatus | null>(
     null
@@ -767,17 +794,30 @@ export default function Home() {
 
     let isActive = true;
     const loadLocationWeather = async () => {
+      const now = Date.now();
+      const locationsToRefresh = locations.filter((location) => {
+        const fetchedAt = locationWeatherFetchedAt.current[location.id] ?? 0;
+        return now - fetchedAt > LOCATION_WEATHER_REFRESH_MS;
+      });
+
+      if (locationsToRefresh.length === 0) {
+        return;
+      }
+
       const results = await Promise.allSettled(
-        locations.map((location) => api<CurrentWeather>(`/weather/current/${location.id}`))
+        locationsToRefresh.map((location) => api<CurrentWeather>(`/weather/current/${location.id}`))
       );
       if (!isActive) return;
 
-      const nextWeather: Record<number, CurrentWeather | null> = {};
-      locations.forEach((location, index) => {
-        const result = results[index];
-        nextWeather[location.id] = result.status === "fulfilled" ? result.value : null;
+      setLocationCurrentWeather((current) => {
+        const nextWeather = { ...current };
+        locationsToRefresh.forEach((location, index) => {
+          const result = results[index];
+          nextWeather[location.id] = result.status === "fulfilled" ? result.value : null;
+          locationWeatherFetchedAt.current[location.id] = Date.now();
+        });
+        return nextWeather;
       });
-      setLocationCurrentWeather(nextWeather);
     };
 
     loadLocationWeather();
@@ -827,6 +867,7 @@ export default function Home() {
       api<CurrentWeather>(`/weather/current/${selectedLocationId}`)
         .then((weather) => {
           if (isActive) {
+            locationWeatherFetchedAt.current[selectedLocationId] = Date.now();
             setLocationCurrentWeather((current) => ({
               ...current,
               [selectedLocationId]: weather,
@@ -835,6 +876,7 @@ export default function Home() {
         })
         .catch(() => {
           if (isActive) {
+            locationWeatherFetchedAt.current[selectedLocationId] = Date.now();
             setLocationCurrentWeather((current) => ({
               ...current,
               [selectedLocationId]: null,
@@ -917,32 +959,34 @@ export default function Home() {
         method: "POST"
       });
       setForecast(snapshot);
-      const records = await api<RawWeatherRecord[]>(
-        `/ingestion/raw-records?location_id=${selectedLocationId}&limit=12`
-      );
-      const normalized = await api<NormalizedWeatherRecord[]>(
-        `/normalization/records?location_id=${selectedLocationId}&limit=12`
-      );
-      const state = await api<CurrentState>(`/current-state/${selectedLocationId}`);
-      const layers = await api<PhaseLayers>(`/forecast/layers/${selectedLocationId}`);
-      const phase20 = await api<Phase20Report>(`/validation/report/${selectedLocationId}`);
-      const phase35 = await api<Phase35Report>(`/forecast/system-report/${selectedLocationId}`);
+      const [records, normalized, state, layers, phase20, phase35] = await Promise.all([
+        api<RawWeatherRecord[]>(`/ingestion/raw-records?location_id=${selectedLocationId}&limit=12`),
+        api<NormalizedWeatherRecord[]>(
+          `/normalization/records?location_id=${selectedLocationId}&limit=12`
+        ),
+        api<CurrentState>(`/current-state/${selectedLocationId}`),
+        api<PhaseLayers>(`/forecast/layers/${selectedLocationId}`),
+        api<Phase20Report>(`/validation/report/${selectedLocationId}`),
+        api<Phase35Report>(`/forecast/system-report/${selectedLocationId}`),
+      ]);
       setRawRecords(records);
       setNormalizedRecords(normalized);
       setCurrentState(state);
       api<CurrentWeather>(`/weather/current/${selectedLocationId}`)
-        .then((weather) =>
+        .then((weather) => {
+          locationWeatherFetchedAt.current[selectedLocationId] = Date.now();
           setLocationCurrentWeather((current) => ({
             ...current,
             [selectedLocationId]: weather,
-          }))
-        )
-        .catch(() =>
+          }));
+        })
+        .catch(() => {
+          locationWeatherFetchedAt.current[selectedLocationId] = Date.now();
           setLocationCurrentWeather((current) => ({
             ...current,
             [selectedLocationId]: null,
-          }))
-        );
+          }));
+        });
       setPhaseLayers(layers);
       setPhase20Report(phase20);
       setPhase35Report(phase35);
@@ -990,6 +1034,7 @@ export default function Home() {
 
     try {
       await api<void>(`/locations/${location.id}`, { method: "DELETE" });
+      delete locationWeatherFetchedAt.current[location.id];
       setLocations((current) => {
         const nextLocations = current.filter((item) => item.id !== location.id);
         saveLocationOrder(nextLocations);
@@ -1531,10 +1576,7 @@ export default function Home() {
                   <div className="record-list">
                     <div className="record-row">
                       <strong>Benchmark</strong>
-                      <span>
-                        {phase20Report?.professional_benchmark.source ?? "No benchmark"} ·{" "}
-                        {phase20Report?.professional_benchmark.comparable_validation_count ?? 0} comparable
-                      </span>
+                      <span>{benchmarkSummary(phase20Report)}</span>
                     </div>
                     <div className="record-row">
                       <strong>Significance</strong>

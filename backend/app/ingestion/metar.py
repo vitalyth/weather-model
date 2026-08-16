@@ -42,6 +42,9 @@ METAR_STATIONS = [
     MetarStation("KDTW", 42.2124, -83.3534),
     MetarStation("KPHL", 39.8744, -75.2424),
     MetarStation("KHOU", 29.6454, -95.2789),
+    MetarStation("LLBG", 32.0114, 34.8867),
+    MetarStation("LLHA", 32.8094, 35.0431),
+    MetarStation("LLER", 29.7237, 35.0114),
 ]
 
 
@@ -68,7 +71,7 @@ class MetarObservationProvider:
         params = {
             "ids": station.icao_id,
             "format": "json",
-            "hours": 2,
+            "hours": 48,
         }
         headers = {
             "Accept": "application/json",

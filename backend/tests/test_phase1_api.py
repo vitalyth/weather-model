@@ -3,8 +3,10 @@ from datetime import UTC, datetime
 from fastapi.testclient import TestClient
 
 from app.database import Base, engine
+from app.ingestion.metar import MetarObservationProvider
 from app.ingestion.providers import SourcePayload
 from app.main import app
+from app.models import Location
 from app.services import current_weather_service, forecast_service, geocoding_service
 
 
@@ -256,6 +258,31 @@ def test_current_weather_endpoint_returns_live_weather_contract(monkeypatch) -> 
     assert weather["condition"] == "Clear"
 
 
+def test_provider_catalog_includes_additional_open_meteo_models() -> None:
+    client = TestClient(app)
+
+    providers = client.get("/ingestion/providers").json()
+    sources = {provider["source"] for provider in providers}
+
+    assert {"Open-Meteo GFS", "Open-Meteo ICON", "Open-Meteo ECMWF IFS"} <= sources
+
+
+def test_metar_provider_selects_israeli_station_for_israeli_location() -> None:
+    provider = MetarObservationProvider()
+    location = Location(
+        name="Nahariya, IL",
+        latitude=33.00892,
+        longitude=35.09814,
+        timezone="Asia/Jerusalem",
+    )
+
+    station, distance_mi = provider._nearest_station(location)
+
+    assert station is not None
+    assert station.icao_id == "LLHA"
+    assert distance_mi < 30
+
+
 def test_forecast_snapshots_are_not_overwritten() -> None:
     client = TestClient(app)
     location = client.post(
@@ -371,6 +398,21 @@ def test_lists_configured_ingestion_providers() -> None:
             "source": "Aviation Weather Center METAR",
             "model": "airport_observation",
             "source_url": "https://aviationweather.gov/api/data/metar",
+        },
+        {
+            "source": "Open-Meteo GFS",
+            "model": "gfs_global",
+            "source_url": "https://api.open-meteo.com/v1/forecast",
+        },
+        {
+            "source": "Open-Meteo ICON",
+            "model": "icon_global",
+            "source_url": "https://api.open-meteo.com/v1/forecast",
+        },
+        {
+            "source": "Open-Meteo ECMWF IFS",
+            "model": "ecmwf_ifs025",
+            "source_url": "https://api.open-meteo.com/v1/forecast",
         },
         {
             "source": "Open-Meteo Historical",

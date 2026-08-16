@@ -2,6 +2,8 @@ import json
 import statistics
 from collections import Counter, defaultdict
 from datetime import UTC, datetime
+from threading import Lock
+from time import monotonic
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -22,6 +24,17 @@ from app.schemas import (
     VisualizationSummaryRead,
 )
 from app.services.phase20_service import build_phase20_report
+
+PHASE35_REPORT_CACHE_SECONDS = 60
+ARCHIVED_NUMERICAL_MODELS = [
+    "Open-Meteo Best Match",
+    "Open-Meteo GFS",
+    "Open-Meteo ICON",
+    "Open-Meteo ECMWF IFS",
+    "National Weather Service",
+]
+_phase35_cache_lock = Lock()
+_phase35_report_cache: dict[tuple[int, int, int], tuple[float, Phase35ReportRead]] = {}
 
 
 def _as_utc(value: datetime) -> datetime:
@@ -125,10 +138,14 @@ def error_analysis(
     )
 
 
-def visualization_summary(db: Session, location: Location) -> VisualizationSummaryRead:
+def visualization_summary(
+    db: Session,
+    location: Location,
+    phase20: Phase20ReportRead | None = None,
+) -> VisualizationSummaryRead:
     records = _validation_records(db, location_id=location.id)
     temp_records = [record for record in records if record.variable == "temperature"]
-    phase20 = build_phase20_report(db, location)
+    phase20 = phase20 or build_phase20_report(db, location)
     return VisualizationSummaryRead(
         actual_vs_predicted=[
             {
@@ -189,7 +206,7 @@ def system_health(db: Session, location_id: int | None = None) -> SystemHealthRe
             / 3600,
             2,
         )
-    missing_models = ["ECMWF", "GFS", "HRRR", "ICON"]
+    missing_models = ["HRRR", "GEM", "JMA"]
     status = "GOOD"
     if latest_snapshot is None:
         status = "DEGRADED"
@@ -209,18 +226,21 @@ def system_health(db: Session, location_id: int | None = None) -> SystemHealthRe
             },
             {
                 "name": "model_coverage",
-                "status": "DEGRADED",
-                "detail": "Only Open-Meteo and NWS are currently archived as forecast sources.",
+                "status": "GOOD",
+                "detail": "Archives Open-Meteo Best Match plus GFS, ICON, ECMWF IFS, NWS where available, and METAR observations.",
             },
         ],
     )
 
 
 def transparency_report(
-    db: Session, location: Location, forecast_snapshot_id: int | None = None
+    db: Session,
+    location: Location,
+    forecast_snapshot_id: int | None = None,
+    phase20: Phase20ReportRead | None = None,
 ) -> TransparencyReportRead:
     snapshot = _selected_snapshot(db, location.id, forecast_snapshot_id)
-    phase20 = build_phase20_report(db, location)
+    phase20 = phase20 or build_phase20_report(db, location)
     feature_snapshot = None
     if snapshot is not None:
         feature_snapshot = db.scalar(
@@ -235,7 +255,7 @@ def transparency_report(
     )
     return TransparencyReportRead(
         forecast_snapshot_id=None if snapshot is None else snapshot.id,
-        numerical_models_used=["Open-Meteo", "National Weather Service"],
+        numerical_models_used=ARCHIVED_NUMERICAL_MODELS,
         latest_observation_time=latest_observation,
         ml_model_version=phase20.machine_learning_forecast.algorithm,
         ensemble_weights=phase20.ensemble.weights,
@@ -319,8 +339,13 @@ def final_scorecard(db: Session, location_id: int | None = None) -> FinalScoreca
 
 
 def phase35_report(db: Session, location: Location) -> Phase35ReportRead:
+    cache_key = _phase35_cache_key(db, location.id)
+    cached = _read_phase35_report_cache(cache_key)
+    if cached is not None:
+        return cached
+
     phase20 = build_phase20_report(db, location)
-    return Phase35ReportRead(
+    report = Phase35ReportRead(
         location=LocationRead.model_validate(location),
         generated_at=datetime.now(UTC),
         phase_21_error_analysis=error_analysis(db, location_id=location.id),
@@ -345,7 +370,7 @@ def phase35_report(db: Session, location: Location) -> Phase35ReportRead:
                 "error_analysis",
             ],
         },
-        phase_25_visualizations=visualization_summary(db, location),
+        phase_25_visualizations=visualization_summary(db, location, phase20=phase20),
         phase_26_database_design={
             "implemented_tables": [
                 "locations",
@@ -366,7 +391,7 @@ def phase35_report(db: Session, location: Location) -> Phase35ReportRead:
         phase_27_api_design={"endpoints": api_catalog()},
         phase_28_automation_pipeline=automation_tasks(),
         phase_29_data_quality_monitoring=system_health(db, location.id),
-        phase_30_transparency=transparency_report(db, location),
+        phase_30_transparency=transparency_report(db, location, phase20=phase20),
         phase_31_fair_comparison=fair_comparison(db, location.id),
         phase_32_professional_outperformance={
             "status": phase20.statistical_significance.classification,
@@ -384,6 +409,50 @@ def phase35_report(db: Session, location: Location) -> Phase35ReportRead:
         },
         phase_35_required_output=development_plan(),
     )
+    _write_phase35_report_cache(cache_key, report)
+    return report
+
+
+def _phase35_cache_key(db: Session, location_id: int) -> tuple[int, int, int]:
+    snapshot_count = int(
+        db.scalar(
+            select(func.count())
+            .select_from(ForecastSnapshot)
+            .where(ForecastSnapshot.location_id == location_id)
+        )
+        or 0
+    )
+    validation_count = int(
+        db.scalar(
+            select(func.count())
+            .select_from(ForecastValidationRecord)
+            .where(ForecastValidationRecord.location_id == location_id)
+        )
+        or 0
+    )
+    return (location_id, snapshot_count, validation_count)
+
+
+def _read_phase35_report_cache(cache_key: tuple[int, int, int]) -> Phase35ReportRead | None:
+    with _phase35_cache_lock:
+        cached = _phase35_report_cache.get(cache_key)
+        if cached is None:
+            return None
+
+        cached_at, report = cached
+        if monotonic() - cached_at > PHASE35_REPORT_CACHE_SECONDS:
+            _phase35_report_cache.pop(cache_key, None)
+            return None
+
+        return report
+
+
+def _write_phase35_report_cache(
+    cache_key: tuple[int, int, int],
+    report: Phase35ReportRead,
+) -> None:
+    with _phase35_cache_lock:
+        _phase35_report_cache[cache_key] = (monotonic(), report)
 
 
 def automation_tasks() -> list[AutomationTaskRead]:
@@ -443,7 +512,14 @@ def api_catalog() -> list[str]:
 def development_plan() -> DevelopmentPlanRead:
     return DevelopmentPlanRead(
         architecture=["FastAPI API", "SQLite persistence", "Next.js dashboard", "provider adapters"],
-        data_source_strategy=["Open-Meteo forecasts", "NWS benchmark forecasts", "METAR observations"],
+        data_source_strategy=[
+            "Open-Meteo Best Match",
+            "Open-Meteo GFS",
+            "Open-Meteo ICON",
+            "Open-Meteo ECMWF IFS",
+            "NWS benchmark forecasts where available",
+            "METAR observations",
+        ],
         database_schema=[
             "raw archive",
             "normalized records",

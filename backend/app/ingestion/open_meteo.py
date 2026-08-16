@@ -9,6 +9,7 @@ from app.models import Location
 OPEN_METEO_FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
 OPEN_METEO_SOURCE = "Open-Meteo"
 OPEN_METEO_MODEL = "best_match"
+OPEN_METEO_MODEL_PROVIDER_SOURCE_PREFIX = "Open-Meteo Model"
 OPEN_METEO_HOURLY_VARIABLES = (
     "temperature_2m,relative_humidity_2m,dew_point_2m,apparent_temperature,"
     "precipitation_probability,precipitation,weather_code,pressure_msl,cloud_cover,"
@@ -18,12 +19,17 @@ OPEN_METEO_DAILY_VARIABLES = "temperature_2m_max,temperature_2m_min"
 
 
 class OpenMeteoForecastProvider:
-    source = OPEN_METEO_SOURCE
-    model = OPEN_METEO_MODEL
     source_url = OPEN_METEO_FORECAST_URL
 
-    def __init__(self, timeout_seconds: float = 12) -> None:
+    def __init__(
+        self,
+        timeout_seconds: float = 12,
+        model: str = OPEN_METEO_MODEL,
+        source: str = OPEN_METEO_SOURCE,
+    ) -> None:
         self.timeout_seconds = timeout_seconds
+        self.model = model
+        self.source = source
 
     def fetch_forecast(self, location: Location) -> SourcePayload:
         params = self._params(location)
@@ -44,7 +50,7 @@ class OpenMeteoForecastProvider:
         )
 
     def _params(self, location: Location) -> dict[str, str | float | int]:
-        return {
+        params: dict[str, str | float | int] = {
             "latitude": location.latitude,
             "longitude": location.longitude,
             "forecast_days": 8,
@@ -56,3 +62,11 @@ class OpenMeteoForecastProvider:
             "hourly": OPEN_METEO_HOURLY_VARIABLES,
             "daily": OPEN_METEO_DAILY_VARIABLES,
         }
+        if self.model != OPEN_METEO_MODEL:
+            params["models"] = self.model
+        return params
+
+
+class OpenMeteoModelProvider(OpenMeteoForecastProvider):
+    def __init__(self, source: str, model: str, timeout_seconds: float = 8) -> None:
+        super().__init__(timeout_seconds=timeout_seconds, model=model, source=source)

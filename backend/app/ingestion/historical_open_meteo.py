@@ -1,3 +1,4 @@
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
@@ -35,21 +36,16 @@ class OpenMeteoHistoricalProvider:
         }
 
         try:
-            with httpx.Client(timeout=self.timeout_seconds) as client:
-                for year_offset in range(1, self.years_back + 1):
-                    historical_date = _same_calendar_day(target_date, target_date.year - year_offset)
-                    start_date = historical_date - timedelta(days=self.window_days)
-                    end_date = historical_date + timedelta(days=self.window_days)
-                    response = client.get(
-                        self.source_url,
-                        params=self._params(location, start_date, end_date),
-                    )
-                    response.raise_for_status()
-                    payload: dict[str, Any] = response.json()
-                    daily = payload.get("daily", {})
+            with ThreadPoolExecutor(max_workers=self.years_back) as executor:
+                futures = [
+                    executor.submit(self._fetch_daily_window, location, target_date, year_offset)
+                    for year_offset in range(1, self.years_back + 1)
+                ]
+                for future in as_completed(futures):
+                    daily = future.result()
                     for key, values in combined_daily.items():
                         values.extend(daily.get(key, []))
-        except httpx.HTTPError as exc:
+        except (httpx.HTTPError, ValueError) as exc:
             raise WeatherProviderError("Open-Meteo historical request failed") from exc
 
         return SourcePayload(
@@ -59,6 +55,24 @@ class OpenMeteoHistoricalProvider:
             retrieved_at=retrieved_at,
             payload={"daily": combined_daily},
         )
+
+    def _fetch_daily_window(
+        self,
+        location: Location,
+        target_date: date,
+        year_offset: int,
+    ) -> dict[str, list[Any]]:
+        historical_date = _same_calendar_day(target_date, target_date.year - year_offset)
+        start_date = historical_date - timedelta(days=self.window_days)
+        end_date = historical_date + timedelta(days=self.window_days)
+        with httpx.Client(timeout=self.timeout_seconds) as client:
+            response = client.get(
+                self.source_url,
+                params=self._params(location, start_date, end_date),
+            )
+            response.raise_for_status()
+            payload: dict[str, Any] = response.json()
+        return payload.get("daily", {})
 
     def _params(self, location: Location, start_date: date, end_date: date) -> dict[str, str | float]:
         return {

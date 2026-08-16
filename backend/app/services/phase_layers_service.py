@@ -20,21 +20,21 @@ from app.schemas import (
 from app.services.current_state_service import build_current_state
 
 FEATURE_VERSION = "phase-10-feature-contract-v0"
-FORECAST_SOURCES = {"Open-Meteo", "National Weather Service"}
+FORECAST_SOURCES = {
+    "Open-Meteo",
+    "Open-Meteo GFS",
+    "Open-Meteo ICON",
+    "Open-Meteo ECMWF IFS",
+    "National Weather Service",
+}
 
 
 def build_phase_layers(db: Session, location: Location) -> PhaseLayersRead:
     generated_at = datetime.now(UTC)
-    records = list(
-        db.scalars(
-            select(NormalizedWeatherRecord)
-            .where(NormalizedWeatherRecord.location_id == location.id)
-            .where(NormalizedWeatherRecord.quality_status != "rejected")
-        ).all()
-    )
     current_state = build_current_state(db, location)
-    numerical = _numerical_model_layer(records, generated_at)
-    historical = _historical_pattern_layer(records)
+    current_temperature = _current_numeric(current_state.values, "temperature")
+    numerical = _numerical_model_layer(db, location.id, generated_at)
+    historical = _historical_pattern_layer(db, location.id, current_temperature)
     analog = _analog_layer()
     microclimate = _microclimate_layer(location)
     regime = _weather_regime(current_state.values, numerical)
@@ -62,14 +62,13 @@ def build_phase_layers(db: Session, location: Location) -> PhaseLayersRead:
 
 
 def _numerical_model_layer(
-    records: list[NormalizedWeatherRecord], generated_at: datetime
+    db: Session, location_id: int, generated_at: datetime
 ) -> NumericalModelLayerRead:
-    forecast_records = [record for record in records if record.source in FORECAST_SOURCES]
-    sources = sorted({record.source for record in forecast_records})
-    temperatures = _latest_values_by_source(forecast_records, "temperature")
-    precip_probs = _latest_values_by_source(forecast_records, "precipitation_probability")
-    winds = _latest_values_by_source(forecast_records, "wind_speed")
-    pressures = _latest_values_by_source(forecast_records, "pressure")
+    sources = _forecast_sources(db, location_id)
+    temperatures = _latest_values_by_source(db, location_id, "temperature")
+    precip_probs = _latest_values_by_source(db, location_id, "precipitation_probability")
+    winds = _latest_values_by_source(db, location_id, "wind_speed")
+    pressures = _latest_values_by_source(db, location_id, "pressure")
     temp_values = list(temperatures.values())
     precip_values = list(precip_probs.values())
 
@@ -88,30 +87,43 @@ def _numerical_model_layer(
     )
 
 
-def _historical_pattern_layer(records: list[NormalizedWeatherRecord]) -> HistoricalPatternLayerRead:
-    historical_records = [
-        record
-        for record in records
-        if record.source == "Open-Meteo Historical" and record.normalized_value is not None
-    ]
+def _historical_pattern_layer(
+    db: Session,
+    location_id: int,
+    current_temperature: float | None,
+) -> HistoricalPatternLayerRead:
+    historical_records = list(
+        db.execute(
+            select(
+                NormalizedWeatherRecord.normalized_variable,
+                NormalizedWeatherRecord.normalized_value,
+            )
+            .where(NormalizedWeatherRecord.location_id == location_id)
+            .where(NormalizedWeatherRecord.quality_status != "rejected")
+            .where(NormalizedWeatherRecord.source == "Open-Meteo Historical")
+            .where(NormalizedWeatherRecord.normalized_value.is_not(None))
+        ).all()
+    )
     highs = [
-        record.normalized_value
+        value
         for record in historical_records
-        if record.normalized_variable == "daily_max_temperature" and record.normalized_value is not None
+        for variable, value in [record]
+        if variable == "daily_max_temperature" and value is not None
     ]
     lows = [
-        record.normalized_value
+        value
         for record in historical_records
-        if record.normalized_variable == "daily_min_temperature" and record.normalized_value is not None
+        for variable, value in [record]
+        if variable == "daily_min_temperature" and value is not None
     ]
     precipitation_days = [
-        record.normalized_value
+        value
         for record in historical_records
-        if record.normalized_variable == "precipitation_amount" and record.normalized_value is not None
+        for variable, value in [record]
+        if variable == "precipitation_amount" and value is not None
     ]
     if highs and lows:
         daily_means = [(high + low) / 2 for high, low in zip(highs, lows, strict=False)]
-        current_temperature = _latest_value(records, "temperature")
         percentile = (
             None
             if current_temperature is None or not daily_means
@@ -262,28 +274,34 @@ def _feature_dataset(
     )
 
 
-def _latest_values_by_source(
-    records: list[NormalizedWeatherRecord], variable: str
-) -> dict[str, float]:
-    latest: dict[str, NormalizedWeatherRecord] = {}
-    for record in records:
-        if record.normalized_variable != variable or record.normalized_value is None:
-            continue
-        existing = latest.get(record.source)
-        if existing is None or record.valid_time > existing.valid_time:
-            latest[record.source] = record
-    return {source: record.normalized_value for source, record in latest.items()}
+def _forecast_sources(db: Session, location_id: int) -> list[str]:
+    return sorted(
+        db.scalars(
+            select(NormalizedWeatherRecord.source)
+            .where(NormalizedWeatherRecord.location_id == location_id)
+            .where(NormalizedWeatherRecord.quality_status != "rejected")
+            .where(NormalizedWeatherRecord.source.in_(FORECAST_SOURCES))
+            .distinct()
+        ).all()
+    )
 
 
-def _latest_value(records: list[NormalizedWeatherRecord], variable: str) -> float | None:
-    values = [
-        record
-        for record in records
-        if record.normalized_variable == variable and record.normalized_value is not None
-    ]
-    if not values:
-        return None
-    return max(values, key=lambda record: record.valid_time).normalized_value
+def _latest_values_by_source(db: Session, location_id: int, variable: str) -> dict[str, float]:
+    latest: dict[str, float] = {}
+    for source in FORECAST_SOURCES:
+        value = db.scalar(
+            select(NormalizedWeatherRecord.normalized_value)
+            .where(NormalizedWeatherRecord.location_id == location_id)
+            .where(NormalizedWeatherRecord.quality_status != "rejected")
+            .where(NormalizedWeatherRecord.source == source)
+            .where(NormalizedWeatherRecord.normalized_variable == variable)
+            .where(NormalizedWeatherRecord.normalized_value.is_not(None))
+            .order_by(NormalizedWeatherRecord.valid_time.desc())
+            .limit(1)
+        )
+        if value is not None:
+            latest[source] = value
+    return latest
 
 
 def _current_numeric(current_values: dict[str, Any], variable: str) -> float | None:

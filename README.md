@@ -37,6 +37,49 @@ npm run dev
 The frontend expects the API at `http://localhost:8000`. Override with
 `NEXT_PUBLIC_API_BASE_URL` when needed.
 
+## Docker / CasaOS / OMV
+
+Local build from this repo:
+
+```bash
+docker compose up -d --build
+```
+
+Open the dashboard at `http://YOUR_SERVER_IP:3000`. The backend API is exposed
+at `http://YOUR_SERVER_IP:8000`, and the frontend automatically calls port
+`8000` on the same host when `NEXT_PUBLIC_API_BASE_URL` is not set.
+
+The SQLite database is stored in the named Docker volume `weather-model-data`,
+so locations, snapshots, validation rows, and background collection history
+survive container updates.
+
+To stop it:
+
+```bash
+docker compose down
+```
+
+To use images built by GitHub Actions instead of building on the server:
+
+```bash
+docker compose -f docker-compose.ghcr.yml up -d
+```
+
+The GitHub workflow publishes:
+
+- `ghcr.io/vitalyth/weather-model/backend:latest`
+- `ghcr.io/vitalyth/weather-model/frontend:latest`
+
+If the GHCR packages are private, log in on the server first:
+
+```bash
+echo YOUR_GITHUB_TOKEN | docker login ghcr.io -u YOUR_GITHUB_USERNAME --password-stdin
+```
+
+For CasaOS or OMV Compose, use the same compose file contents. If ports `3000`
+or `8000` are already used on your server, change the left side of the port
+mapping, for example `"3010:3000"` for the frontend.
+
 ## Current Data Source
 
 Forecast snapshots are generated from the Open-Meteo forecast API. Raw source

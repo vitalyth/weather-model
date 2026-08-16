@@ -1,0 +1,26 @@
+services:
+  backend:
+    image: ghcr.io/vitalyth/weather-model/backend:latest
+    container_name: weather-model-backend
+    restart: unless-stopped
+    environment:
+      WEATHER_DATABASE_URL: sqlite:////app/data/weather_model.db
+      WEATHER_BACKGROUND_COLLECTION_ENABLED: "true"
+      WEATHER_BACKGROUND_COLLECTION_INTERVAL_MINUTES: "60"
+    ports:
+      - "8000:8000"
+    volumes:
+      - weather-model-data:/app/data
+
+  frontend:
+    image: ghcr.io/vitalyth/weather-model/frontend:latest
+    container_name: weather-model-frontend
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+
+volumes:
+  weather-model-data:
