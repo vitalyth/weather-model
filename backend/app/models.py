@@ -158,3 +158,31 @@ class ForecastValidationRecord(Base):
 
     location: Mapped[Location] = relationship(back_populates="validation_records")
     forecast_snapshot: Mapped[ForecastSnapshot] = relationship(back_populates="validation_records")
+
+
+class CachedReport(Base):
+    __tablename__ = "cached_reports"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    location_id: Mapped[int] = mapped_column(ForeignKey("locations.id"), nullable=False, index=True)
+    report_kind: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    generated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    payload_json: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
+    )
+
+
+class CollectionRun(Base):
+    __tablename__ = "collection_runs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    success_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    location_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    forecast_snapshot_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    validation_record_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    cached_report_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    error: Mapped[str | None] = mapped_column(Text)
+    errors_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")

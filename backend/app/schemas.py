@@ -183,6 +183,7 @@ class BackgroundCollectionStatusRead(BaseModel):
     last_location_count: int = 0
     last_forecast_snapshot_count: int = 0
     last_validation_record_count: int = 0
+    last_cached_report_count: int = 0
     last_errors: list[str] = Field(default_factory=list)
 
 

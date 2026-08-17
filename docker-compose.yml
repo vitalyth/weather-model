@@ -9,10 +9,29 @@ services:
     environment:
       WEATHER_DATABASE_URL: sqlite:////app/data/weather_model.db
       WEATHER_CORS_ORIGIN_REGEX: "https?://.*"
+      WEATHER_BACKGROUND_COLLECTION_ENABLED: "false"
+      WEATHER_BACKGROUND_COLLECTION_INTERVAL_MINUTES: "60"
+    expose:
+      - "8000"
+    volumes:
+      - weather-model-data:/app/data
+
+  collector:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    image: weather-model-backend:local
+    container_name: weather-model-collector
+    restart: unless-stopped
+    command: ["python", "-m", "app.worker"]
+    environment:
+      WEATHER_DATABASE_URL: sqlite:////app/data/weather_model.db
       WEATHER_BACKGROUND_COLLECTION_ENABLED: "true"
       WEATHER_BACKGROUND_COLLECTION_INTERVAL_MINUTES: "60"
-    ports:
-      - "8000:8000"
+      WEATHER_BACKGROUND_COLLECTION_STARTUP_DELAY_SECONDS: "0"
+    depends_on:
+      backend:
+        condition: service_healthy
     volumes:
       - weather-model-data:/app/data
 

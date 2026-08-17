@@ -138,6 +138,7 @@ type BackgroundCollectionStatus = {
   last_location_count: number;
   last_forecast_snapshot_count: number;
   last_validation_record_count: number;
+  last_cached_report_count: number;
   last_errors: string[];
 };
 
@@ -1258,6 +1259,7 @@ export default function Home() {
                   {collectionStatus?.last_finished_at
                     ? formatDate(collectionStatus.last_finished_at)
                     : "waiting for first run"}
+                  {collectionStatus ? ` · ${collectionStatus.last_cached_report_count} cached reports` : ""}
                 </p>
               </div>
             </div>

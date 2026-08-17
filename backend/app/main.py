@@ -61,6 +61,7 @@ from app.services.forecast_service import (
 from app.services.normalization_service import list_normalized_records
 from app.services.phase20_service import build_phase20_report, validate_matured_forecasts
 from app.services.phase_layers_service import build_phase_layers
+from app.services.report_cache_service import latest_report
 
 settings = get_settings()
 
@@ -104,8 +105,8 @@ def runtime_debug() -> dict[str, str]:
 
 
 @app.get("/collection/status", response_model=BackgroundCollectionStatusRead)
-def read_collection_status() -> dict[str, object]:
-    return background_collection_status()
+def read_collection_status(db: DbSession) -> dict[str, object]:
+    return background_collection_status(db)
 
 
 @app.post("/locations", response_model=LocationRead, status_code=status.HTTP_201_CREATED)
@@ -240,6 +241,9 @@ def read_current_state(location_id: int, db: DbSession) -> CurrentStateRead:
     location = db.get(Location, location_id)
     if location is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Location not found")
+    cached = latest_report(db, location_id, "current_state", CurrentStateRead)
+    if cached is not None:
+        return cached
     return build_current_state(db, location)
 
 
@@ -267,6 +271,9 @@ def _get_location_or_404(location_id: int, db: DbSession) -> Location:
 @app.get("/forecast/layers/{location_id}", response_model=PhaseLayersRead)
 def read_forecast_layers(location_id: int, db: DbSession) -> PhaseLayersRead:
     location = _get_location_or_404(location_id, db)
+    cached = latest_report(db, location_id, "phase_layers", PhaseLayersRead)
+    if cached is not None:
+        return cached
     return build_phase_layers(db, location)
 
 
@@ -288,6 +295,9 @@ def run_validation(location_id: int, db: DbSession) -> dict[str, int]:
 @app.get("/validation/report/{location_id}", response_model=Phase20ReportRead)
 def read_validation_report(location_id: int, db: DbSession) -> Phase20ReportRead:
     location = _get_location_or_404(location_id, db)
+    cached = latest_report(db, location_id, "validation_report", Phase20ReportRead)
+    if cached is not None:
+        return cached
     return build_phase20_report(db, location)
 
 
@@ -403,6 +413,9 @@ def read_api_catalog() -> list[str]:
 @app.get("/forecast/system-report/{location_id}", response_model=Phase35ReportRead)
 def read_forecast_system_report(location_id: int, db: DbSession) -> Phase35ReportRead:
     location = _get_location_or_404(location_id, db)
+    cached = latest_report(db, location_id, "system_report", Phase35ReportRead)
+    if cached is not None:
+        return cached
     return phase35_report(db, location)
 
 

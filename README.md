@@ -45,13 +45,21 @@ Local build from this repo:
 docker compose up -d --build
 ```
 
-Open the dashboard at `http://YOUR_SERVER_IP:3000`. The backend API is exposed
-at `http://YOUR_SERVER_IP:8000`, and the frontend automatically calls port
-`8000` on the same host when `NEXT_PUBLIC_API_BASE_URL` is not set.
+Open the dashboard at `http://YOUR_SERVER_IP:3000`. In Docker, the backend API
+is internal to the Compose network and the frontend proxies API requests to it.
+Only the frontend port needs to be published on the host.
 
 The SQLite database is stored in the named Docker volume `weather-model-data`,
-so locations, snapshots, validation rows, and background collection history
-survive container updates.
+so locations, hourly snapshots, validation rows, cached reports, and background
+collection history survive container updates.
+
+Docker runs three services:
+
+- `frontend` - the Next.js dashboard exposed on port `3000`
+- `backend` - the FastAPI API, reachable inside Docker as `http://backend:8000`
+- `collector` - an hourly background worker that samples every saved location,
+  generates forecasts, validates matured forecasts, refreshes calculated
+  reports, and stores the results in SQLite
 
 To stop it:
 
@@ -76,9 +84,9 @@ If the GHCR packages are private, log in on the server first:
 echo YOUR_GITHUB_TOKEN | docker login ghcr.io -u YOUR_GITHUB_USERNAME --password-stdin
 ```
 
-For CasaOS or OMV Compose, use the same compose file contents. If ports `3000`
-or `8000` are already used on your server, change the left side of the port
-mapping, for example `"3010:3000"` for the frontend.
+For CasaOS or OMV Compose, use the same compose file contents. If port `3000`
+is already used on your server, change the left side of the frontend mapping,
+for example `"3010:3000"`.
 
 ## Current Data Source
 

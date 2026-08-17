@@ -1,0 +1,13 @@
+import asyncio
+
+from app.database import init_db
+from app.services.background_collection_service import run_background_collection_loop
+
+
+def main() -> None:
+    init_db()
+    asyncio.run(run_background_collection_loop())
+
+
+if __name__ == "__main__":
+    main()
