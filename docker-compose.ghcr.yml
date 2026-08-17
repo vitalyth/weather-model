@@ -26,6 +26,8 @@ services:
     depends_on:
       backend:
         condition: service_healthy
+    healthcheck:
+      disable: true
     volumes:
       - weather-model-data:/app/data
 

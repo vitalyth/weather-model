@@ -51,13 +51,24 @@ def _update_status(**updates: Any) -> None:
         _status.update(updates)
 
 
+def _log(message: str) -> None:
+    print(f"[collector] {datetime.now(UTC).isoformat()} {message}", flush=True)
+
+
 async def run_background_collection_loop() -> None:
     if not settings.background_collection_enabled:
+        _log("disabled by WEATHER_BACKGROUND_COLLECTION_ENABLED=false")
         return
 
+    _log(
+        "starting hourly loop "
+        f"interval={settings.background_collection_interval_minutes}m "
+        f"startup_delay={settings.background_collection_startup_delay_seconds}s"
+    )
     await asyncio.sleep(settings.background_collection_startup_delay_seconds)
     while True:
         await asyncio.to_thread(run_collection_cycle)
+        _log(f"sleeping {settings.background_collection_interval_minutes} minutes")
         await asyncio.sleep(settings.background_collection_interval_minutes * 60)
 
 
@@ -81,25 +92,35 @@ def run_collection_cycle() -> dict[str, Any]:
 
     with SessionLocal() as db:
         locations = list(db.scalars(select(Location).order_by(Location.name)).all())
+        _log(f"cycle started run_id={run_id} locations={len(locations)}")
         for location in locations:
+            _log(f"{location.name}: sampling started")
             try:
                 create_forecast_snapshot(db, location)
                 forecast_count += 1
+                _log(f"{location.name}: forecast snapshot saved")
             except Exception as exc:  # noqa: BLE001
                 db.rollback()
                 errors.append(f"{location.name}: forecast collection failed: {exc}")
+                _log(f"{location.name}: forecast collection failed: {exc}")
 
             try:
-                validation_count += validate_matured_forecasts(db, location)
+                created_validations = validate_matured_forecasts(db, location)
+                validation_count += created_validations
+                _log(f"{location.name}: validation created {created_validations} records")
             except Exception as exc:  # noqa: BLE001
                 db.rollback()
                 errors.append(f"{location.name}: validation failed: {exc}")
+                _log(f"{location.name}: validation failed: {exc}")
 
             try:
-                cached_report_count += _cache_location_reports(db, location)
+                cached_reports = _cache_location_reports(db, location)
+                cached_report_count += cached_reports
+                _log(f"{location.name}: cached {cached_reports} reports")
             except Exception as exc:  # noqa: BLE001
                 db.rollback()
                 errors.append(f"{location.name}: report cache failed: {exc}")
+                _log(f"{location.name}: report cache failed: {exc}")
 
     finished_at = datetime.now(UTC)
     last_error = "; ".join(errors[:3]) if errors else None
@@ -122,6 +143,12 @@ def run_collection_cycle() -> dict[str, Any]:
         validation_count=validation_count,
         cached_report_count=cached_report_count,
         errors=errors,
+    )
+    _log(
+        "cycle finished "
+        f"run_id={run_id} locations={len(locations)} "
+        f"forecasts={forecast_count} validations={validation_count} "
+        f"cached_reports={cached_report_count} errors={len(errors)}"
     )
     return background_collection_status()
 
