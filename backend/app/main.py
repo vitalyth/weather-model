@@ -3,7 +3,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, HTTPException, Query, status
+from fastapi import Depends, FastAPI, HTTPException, Query, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -248,16 +248,13 @@ def read_current_state(location_id: int, db: DbSession) -> CurrentStateRead:
 
 
 @app.get("/weather/current/{location_id}", response_model=CurrentWeatherRead)
-def read_current_weather(location_id: int, db: DbSession) -> dict[str, object]:
+def read_current_weather(location_id: int, db: DbSession) -> dict[str, object] | Response:
     location = db.get(Location, location_id)
     if location is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Location not found")
     weather = current_weather_service.get_cached_current_weather(db, location_id)
     if weather is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="No cached current weather yet. The hourly collector will populate it.",
-        )
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
     return weather
 
 

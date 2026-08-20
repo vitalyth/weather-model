@@ -267,6 +267,19 @@ def test_current_weather_endpoint_returns_cached_weather_contract() -> None:
     assert weather["condition"] == "Clear"
 
 
+def test_current_weather_endpoint_returns_no_content_before_collector_runs() -> None:
+    client = TestClient(app)
+    location = client.post(
+        "/locations",
+        json={"name": "Lexington, MA", "latitude": 42.4473, "longitude": -71.2245},
+    ).json()
+
+    response = client.get(f"/weather/current/{location['id']}")
+
+    assert response.status_code == 204
+    assert response.content == b""
+
+
 def test_current_weather_reuses_persisted_cache_without_provider_call(monkeypatch) -> None:
     client = TestClient(app)
     location = client.post(

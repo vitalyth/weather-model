@@ -802,7 +802,9 @@ export default function Home() {
       }
 
       const results = await Promise.allSettled(
-        locationsToRefresh.map((location) => api<CurrentWeather>(`/weather/current/${location.id}`))
+        locationsToRefresh.map((location) =>
+          api<CurrentWeather | undefined>(`/weather/current/${location.id}`)
+        )
       );
       if (!isActive) return;
 
@@ -810,7 +812,8 @@ export default function Home() {
         const nextWeather = { ...current };
         locationsToRefresh.forEach((location, index) => {
           const result = results[index];
-          nextWeather[location.id] = result.status === "fulfilled" ? result.value : null;
+          nextWeather[location.id] =
+            result.status === "fulfilled" ? result.value ?? null : null;
           locationWeatherFetchedAt.current[location.id] = Date.now();
         });
         return nextWeather;
@@ -950,12 +953,12 @@ export default function Home() {
       setRawRecords(records);
       setNormalizedRecords(normalized);
       setCurrentState(state);
-      api<CurrentWeather>(`/weather/current/${selectedLocationId}`)
+      api<CurrentWeather | undefined>(`/weather/current/${selectedLocationId}`)
         .then((weather) => {
           locationWeatherFetchedAt.current[selectedLocationId] = Date.now();
           setLocationCurrentWeather((current) => ({
             ...current,
-            [selectedLocationId]: weather,
+            [selectedLocationId]: weather ?? null,
           }));
         })
         .catch(() => {
