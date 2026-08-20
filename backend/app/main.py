@@ -253,7 +253,7 @@ def read_current_weather(location_id: int, db: DbSession) -> dict[str, object]:
     if location is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Location not found")
     try:
-        return current_weather_service.fetch_current_weather(location)
+        return current_weather_service.fetch_current_weather(db, location)
     except WeatherProviderError as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,

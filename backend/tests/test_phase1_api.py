@@ -1,12 +1,13 @@
+import json
 from datetime import UTC, datetime
 
 from fastapi.testclient import TestClient
 
-from app.database import Base, engine
+from app.database import Base, SessionLocal, engine
 from app.ingestion.metar import MetarObservationProvider
 from app.ingestion.providers import SourcePayload
 from app.main import app
-from app.models import Location
+from app.models import CachedReport, Location
 from app.services import current_weather_service, forecast_service, geocoding_service
 
 
@@ -236,7 +237,7 @@ def test_current_weather_endpoint_returns_live_weather_contract(monkeypatch) -> 
     monkeypatch.setattr(
         current_weather_service,
         "fetch_current_weather",
-        lambda location: {
+        lambda db, location: {
             "location_id": location.id,
             "source": "Open-Meteo current weather",
             "temperature_f": 61.7,
@@ -256,6 +257,47 @@ def test_current_weather_endpoint_returns_live_weather_contract(monkeypatch) -> 
     assert weather["source"] == "Open-Meteo current weather"
     assert weather["temperature_f"] == 61.7
     assert weather["condition"] == "Clear"
+
+
+def test_current_weather_reuses_persisted_cache_without_provider_call(monkeypatch) -> None:
+    client = TestClient(app)
+    location = client.post(
+        "/locations",
+        json={"name": "Lexington, MA", "latitude": 42.4473, "longitude": -71.2245},
+    ).json()
+
+    cached_weather = {
+        "location_id": location["id"],
+        "source": "Open-Meteo current weather",
+        "temperature_f": 62.4,
+        "relative_humidity_percent": 71,
+        "wind_speed_mph": 5.2,
+        "weather_code": 1,
+        "condition": "Partly cloudy",
+        "observed_at": datetime(2026, 8, 16, 0, 0, tzinfo=UTC).isoformat(),
+        "timezone": "America/New_York",
+    }
+    with SessionLocal() as db:
+        db.add(
+            CachedReport(
+                location_id=location["id"],
+                report_kind="current_weather",
+                generated_at=datetime.now(UTC),
+                payload_json=json.dumps(cached_weather),
+            )
+        )
+        db.commit()
+
+    class FailingClient:
+        def __init__(self, *args, **kwargs) -> None:
+            raise AssertionError("Open-Meteo should not be called when cache is fresh")
+
+    monkeypatch.setattr(current_weather_service.httpx, "Client", FailingClient)
+
+    response = client.get(f"/weather/current/{location['id']}")
+
+    assert response.status_code == 200
+    assert response.json()["temperature_f"] == 62.4
 
 
 def test_provider_catalog_includes_additional_open_meteo_models() -> None:

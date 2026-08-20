@@ -19,6 +19,8 @@ class Settings(BaseSettings):
     background_collection_enabled: bool = True
     background_collection_interval_minutes: int = Field(default=60, ge=5)
     background_collection_startup_delay_seconds: int = Field(default=10, ge=0)
+    current_weather_cache_minutes: int = Field(default=60, ge=5)
+    current_weather_stale_fallback_hours: int = Field(default=24, ge=1)
 
     model_config = SettingsConfigDict(env_file=".env", env_prefix="WEATHER_")
 

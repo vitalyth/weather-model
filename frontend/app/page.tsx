@@ -43,7 +43,7 @@ const API_BASE_URL = resolveApiBaseUrl();
 const SELECTED_LOCATION_STORAGE_KEY = "weather-model:selected-location-id";
 const LOCATION_ORDER_STORAGE_KEY = "weather-model:location-order";
 const API_TIMEOUT_MS = 45000;
-const LOCATION_WEATHER_REFRESH_MS = 5 * 60 * 1000;
+const LOCATION_WEATHER_REFRESH_MS = 30 * 60 * 1000;
 
 type Location = {
   id: number;
@@ -861,25 +861,6 @@ export default function Home() {
       );
       const nextCurrentState = currentResult.status === "fulfilled" ? currentResult.value : null;
       setCurrentState(nextCurrentState);
-      api<CurrentWeather>(`/weather/current/${selectedLocationId}`)
-        .then((weather) => {
-          if (isActive) {
-            locationWeatherFetchedAt.current[selectedLocationId] = Date.now();
-            setLocationCurrentWeather((current) => ({
-              ...current,
-              [selectedLocationId]: weather,
-            }));
-          }
-        })
-        .catch(() => {
-          if (isActive) {
-            locationWeatherFetchedAt.current[selectedLocationId] = Date.now();
-            setLocationCurrentWeather((current) => ({
-              ...current,
-              [selectedLocationId]: null,
-            }));
-          }
-        });
       setPhaseLayers(
         phaseLayersResult.status === "fulfilled" ? phaseLayersResult.value : null
       );
