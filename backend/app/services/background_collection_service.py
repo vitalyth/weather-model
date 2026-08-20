@@ -94,16 +94,20 @@ def run_collection_cycle() -> dict[str, Any]:
     with SessionLocal() as db:
         locations = list(db.scalars(select(Location).order_by(Location.name)).all())
         _log(f"cycle started run_id={run_id} locations={len(locations)}")
+        current_weather_result = current_weather_service.fetch_current_weather_batch(db, locations)
+        _log(
+            "current weather batch "
+            f"fetched={current_weather_result.fetched_count} "
+            f"skipped_fresh={current_weather_result.skipped_fresh_count} "
+            f"stale_fallback={current_weather_result.stale_fallback_count} "
+            f"errors={len(current_weather_result.errors)}"
+        )
+        for error in current_weather_result.errors:
+            errors.append(f"current weather: {error}")
+            _log(f"current weather: {error}")
+
         for location in locations:
             _log(f"{location.name}: sampling started")
-            try:
-                current_weather_service.fetch_current_weather(db, location)
-                _log(f"{location.name}: current weather cached")
-            except Exception as exc:  # noqa: BLE001
-                db.rollback()
-                errors.append(f"{location.name}: current weather failed: {exc}")
-                _log(f"{location.name}: current weather failed: {exc}")
-
             try:
                 create_forecast_snapshot(db, location)
                 forecast_count += 1

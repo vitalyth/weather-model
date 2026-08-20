@@ -1,5 +1,6 @@
 import json
 from datetime import UTC, datetime
+from typing import Self
 
 from fastapi.testclient import TestClient
 
@@ -131,6 +132,7 @@ def fake_historical_payload() -> dict:
 def setup_function() -> None:
     Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
+    current_weather_service.clear_current_weather_cache()
     forecast_service.fetch_forecast_source = lambda _: SourcePayload(
         source="Open-Meteo",
         model="best_match",
@@ -304,6 +306,78 @@ def test_current_weather_reuses_persisted_cache_without_provider_call(monkeypatc
 
     assert response.status_code == 200
     assert response.json()["temperature_f"] == 62.4
+
+
+def test_current_weather_batch_fetches_multiple_locations_in_one_request(monkeypatch) -> None:
+    requested_params = {}
+
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> list[dict]:
+            return [
+                {
+                    "timezone": "America/New_York",
+                    "current": {
+                        "time": "2026-08-16T00:00",
+                        "temperature_2m": 62.4,
+                        "relative_humidity_2m": 71,
+                        "wind_speed_10m": 5.2,
+                        "weather_code": 1,
+                    },
+                },
+                {
+                    "timezone": "Asia/Jerusalem",
+                    "current": {
+                        "time": "2026-08-16T07:00",
+                        "temperature_2m": 81.1,
+                        "relative_humidity_2m": 58,
+                        "wind_speed_10m": 7.4,
+                        "weather_code": 0,
+                    },
+                },
+            ]
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs) -> None:
+            return None
+
+        def __enter__(self) -> Self:
+            return self
+
+        def __exit__(self, *args) -> None:
+            return None
+
+        def get(self, url: str, params: dict) -> FakeResponse:
+            requested_params.update(params)
+            return FakeResponse()
+
+    monkeypatch.setattr(current_weather_service.httpx, "Client", FakeClient)
+
+    with SessionLocal() as db:
+        lexington = Location(name="Lexington", latitude=42.4473, longitude=-71.2245)
+        tel_aviv = Location(name="Tel Aviv", latitude=32.0853, longitude=34.7818)
+        db.add_all([lexington, tel_aviv])
+        db.commit()
+        db.refresh(lexington)
+        db.refresh(tel_aviv)
+
+        result = current_weather_service.fetch_current_weather_batch(
+            db,
+            [lexington, tel_aviv],
+        )
+
+        lexington_weather = current_weather_service.get_cached_current_weather(db, lexington.id)
+        tel_aviv_weather = current_weather_service.get_cached_current_weather(db, tel_aviv.id)
+
+    assert requested_params["latitude"] == "42.4473,32.0853"
+    assert requested_params["longitude"] == "-71.2245,34.7818"
+    assert result.fetched_count == 2
+    assert lexington_weather is not None
+    assert lexington_weather["temperature_f"] == 62.4
+    assert tel_aviv_weather is not None
+    assert tel_aviv_weather["temperature_f"] == 81.1
 
 
 def test_provider_catalog_includes_additional_open_meteo_models() -> None:
