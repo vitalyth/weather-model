@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.database import SessionLocal
 from app.models import CollectionRun, Location
+from app.services import current_weather_service
 from app.services.completion_service import phase35_report
 from app.services.current_state_service import build_current_state
 from app.services.forecast_service import create_forecast_snapshot
@@ -95,6 +96,14 @@ def run_collection_cycle() -> dict[str, Any]:
         _log(f"cycle started run_id={run_id} locations={len(locations)}")
         for location in locations:
             _log(f"{location.name}: sampling started")
+            try:
+                current_weather_service.fetch_current_weather(db, location)
+                _log(f"{location.name}: current weather cached")
+            except Exception as exc:  # noqa: BLE001
+                db.rollback()
+                errors.append(f"{location.name}: current weather failed: {exc}")
+                _log(f"{location.name}: current weather failed: {exc}")
+
             try:
                 create_forecast_snapshot(db, location)
                 forecast_count += 1

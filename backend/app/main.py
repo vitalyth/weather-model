@@ -252,13 +252,13 @@ def read_current_weather(location_id: int, db: DbSession) -> dict[str, object]:
     location = db.get(Location, location_id)
     if location is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Location not found")
-    try:
-        return current_weather_service.fetch_current_weather(db, location)
-    except WeatherProviderError as exc:
+    weather = current_weather_service.get_cached_current_weather(db, location_id)
+    if weather is None:
         raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Current weather provider is unavailable. Try again shortly.",
-        ) from exc
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No cached current weather yet. The hourly collector will populate it.",
+        )
+    return weather
 
 
 def _get_location_or_404(location_id: int, db: DbSession) -> Location:

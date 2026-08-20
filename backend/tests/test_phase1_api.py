@@ -227,28 +227,34 @@ def test_location_search_returns_geocoded_candidates(monkeypatch) -> None:
     assert result["timezone"] == "America/New_York"
 
 
-def test_current_weather_endpoint_returns_live_weather_contract(monkeypatch) -> None:
+def test_current_weather_endpoint_returns_cached_weather_contract() -> None:
     client = TestClient(app)
     location = client.post(
         "/locations",
         json={"name": "Lexington, MA", "latitude": 42.4473, "longitude": -71.2245},
     ).json()
 
-    monkeypatch.setattr(
-        current_weather_service,
-        "fetch_current_weather",
-        lambda db, location: {
-            "location_id": location.id,
-            "source": "Open-Meteo current weather",
-            "temperature_f": 61.7,
-            "relative_humidity_percent": 69,
-            "wind_speed_mph": 4.7,
-            "weather_code": 0,
-            "condition": "Clear",
-            "observed_at": datetime(2026, 8, 16, 0, 0, tzinfo=UTC),
-            "timezone": "America/New_York",
-        },
-    )
+    cached_weather = {
+        "location_id": location["id"],
+        "source": "Open-Meteo current weather",
+        "temperature_f": 61.7,
+        "relative_humidity_percent": 69,
+        "wind_speed_mph": 4.7,
+        "weather_code": 0,
+        "condition": "Clear",
+        "observed_at": datetime(2026, 8, 16, 0, 0, tzinfo=UTC).isoformat(),
+        "timezone": "America/New_York",
+    }
+    with SessionLocal() as db:
+        db.add(
+            CachedReport(
+                location_id=location["id"],
+                report_kind="current_weather",
+                generated_at=datetime.now(UTC),
+                payload_json=json.dumps(cached_weather),
+            )
+        )
+        db.commit()
 
     response = client.get(f"/weather/current/{location['id']}")
 

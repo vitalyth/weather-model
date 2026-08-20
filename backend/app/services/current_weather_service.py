@@ -71,6 +71,10 @@ def fetch_current_weather(db: Session, location: Location) -> dict[str, Any]:
     return weather
 
 
+def get_cached_current_weather(db: Session, location_id: int) -> dict[str, Any] | None:
+    return _read_persisted_weather(db, location_id, _stale_cache_cutoff())
+
+
 def clear_current_weather_cache() -> None:
     with _cache_lock:
         _current_weather_cache.clear()
